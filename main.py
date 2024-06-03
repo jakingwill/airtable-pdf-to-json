@@ -124,5 +124,5 @@ def main(pdf_url):
         print("Extraction failed. Please check the PDF file.")
 
 if __name__ == '__main__':
-    pdf_url = 'https://v5.airtableusercontent.com/v3/u/29/29/1717416000000/cjSW2n6LlYVqvAsyrOUZYA/s-q8P-T4M21QAfXldzh3OCrwvNZOpsZ-e1x2pcmL3R3orCQBM4ZT1Oo99GPOdHx7zW3j1m_RzvFdrUpTlGW6M9BmD-klZFN8sJh_B-ExpMvj5ihbUMQ128IzeNCKnennJKWkVJKeggEJ5iqbcrnRjg/-samD5EdXfKlv_OcB_uljXqoFkyTrXDcHuphHtO33gM'  # Replace with the actual URL from Airtable
+    pdf_url = 'https://www.cardiffmet.ac.uk/education/courses/Documents/+Numeracy%20test%20%20A2%20EXEMPLAR%20SEWCTET%20June%202013.pdf'  # Replace with the actual URL from Airtable
     main(pdf_url)
