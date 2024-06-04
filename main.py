@@ -3,10 +3,14 @@ import subprocess
 import shutil
 import google.generativeai as genai
 import requests
+from flask import Flask, request, jsonify
+
+app = Flask(__name__)
 
 # Initialize Gemini API client with your API key
 gemini_api_key = os.environ['GEMINI_API_KEY']
 client = genai.configure(api_key=gemini_api_key)
+airtable_webhook_url = os.environ['AIRTABLE_WEBHOOK']
 
 # Define functions to upload text and image files to Gemini
 def upload_text_to_gemini(text_content):
@@ -90,7 +94,19 @@ def summarize_content(files):
 
     return response.text
 
-def main(pdf_url):
+def send_to_airtable(record_id, summary):
+    webhook_url = airtable_webhook_url
+    data = {
+        "record_id": record_id,
+        "summary": summary
+    }
+    response = requests.post(webhook_url, json=data)
+    if response.status_code == 200:
+        print("Successfully sent data to Airtable")
+    else:
+        print(f"Failed to send data to Airtable: {response.status_code}, {response.text}")
+
+def process_pdf(pdf_url, record_id):
     # Create a 'downloads' directory if it doesn't exist
     os.makedirs('downloads', exist_ok=True)
 
@@ -117,9 +133,23 @@ def main(pdf_url):
         # Summarize content using Gemini
         summary = summarize_content([assessment_text])
         print(summary)
+
+        # Send summary to Airtable
+        send_to_airtable(record_id, summary)
     else:
         print("Extraction failed. Please check the PDF file.")
 
+@app.route('/process_pdf', methods=['POST'])
+def process_pdf_route():
+    data = request.get_json()
+    pdf_url = data.get('pdf_url')
+    record_id = data.get('record_id')
+
+    if pdf_url and record_id:
+        process_pdf(pdf_url, record_id)
+        return jsonify({"status": "processing started"}), 200
+    else:
+        return jsonify({"error": "Missing pdf_url or record_id"}), 400
+
 if __name__ == '__main__':
-    pdf_url = 'https://www.cardiffmet.ac.uk/education/courses/Documents/+Numeracy%20test%20%20A2%20EXEMPLAR%20SEWCTET%20June%202013.pdf'  # Replace with the actual URL from Airtable
-    main(pdf_url)
+    app.run(host='0.0.0.0', port=5000)
