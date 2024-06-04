@@ -16,7 +16,6 @@ def upload_text_to_gemini(text_content):
     os.remove('temp_text.txt')
     return response.uri
 
-
 def upload_image_to_gemini(image_file_path):
     with open(image_file_path, 'rb') as file:
         response = genai.upload_file(image_file_path)
@@ -35,7 +34,6 @@ def extract_pdf_content(pdf_path, output_dir):
 
     # Return the path of the extracted text file
     return os.path.join(output_dir, 'text.txt')
-
 
 def download_pdf(pdf_url, output_dir):
     # Ensure the output directory exists
@@ -91,7 +89,6 @@ def summarize_content(files):
     response = model.generate_content(prompt)
 
     return response.text
-
 
 def main(pdf_url):
     # Create a 'downloads' directory if it doesn't exist
