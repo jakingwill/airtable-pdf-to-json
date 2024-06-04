@@ -39,20 +39,19 @@ def extract_pdf_content(pdf_path, output_dir):
     # Return the path of the extracted text file
     return os.path.join(output_dir, 'text.txt')
 
-def download_pdf(pdf_url, output_dir):
-    # Ensure the output directory exists
-    os.makedirs(output_dir, exist_ok=True)
+def download_pdf(pdf_url, download_folder):
+    # Ensure pdf_url is a string
+    if isinstance(pdf_url, list):
+        pdf_url = pdf_url[0]
 
-    # Extract the filename from the URL
-    filename = 'downloaded_pdf.pdf'
-
-    # Download the PDF file
-    file_path = os.path.join(output_dir, filename)
-    with open(file_path, 'wb') as f:
-        response = requests.get(pdf_url)
-        f.write(response.content)
-
-    return file_path
+    response = requests.get(pdf_url)
+    if response.status_code == 200:
+        file_path = os.path.join(download_folder, os.path.basename(pdf_url))
+        with open(file_path, 'wb') as file:
+            file.write(response.content)
+        return file_path
+    else:
+        raise Exception(f"Failed to download PDF, status code: {response.status_code}")
 
 # Define function to upload extracted content to Gemini
 def upload_to_gemini(output_dir):
