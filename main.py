@@ -4,8 +4,12 @@ import shutil
 import google.generativeai as genai
 import requests
 from flask import Flask, request, jsonify
+import logging
 
 app = Flask(__name__)
+
+# Initialize logging
+logging.basicConfig(level=logging.DEBUG)
 
 # Initialize Gemini API client with your API key
 gemini_api_key = os.environ['GEMINI_API_KEY']
@@ -57,9 +61,8 @@ def download_pdf(pdf_url, download_folder):
 def upload_to_gemini(output_dir):
     files = []
 
-    # Print list of files in output directory for debugging
-    print("Files in output directory:")
-    print(os.listdir(output_dir))
+    # Log list of files in output directory for debugging
+    logging.debug("Files in output directory: %s", os.listdir(output_dir))
 
     # Upload image files to Gemini
     for filename in sorted(os.listdir(output_dir)):
@@ -76,7 +79,7 @@ def upload_to_gemini(output_dir):
             text_gemini_file = upload_text_to_gemini(text_content)
             files.append(text_gemini_file)
     else:
-        print("Error: Text file not found.")
+        logging.error("Text file not found in output directory")
 
     return files
 
@@ -101,54 +104,63 @@ def send_to_airtable(record_id, summary):
     }
     response = requests.post(webhook_url, json=data)
     if response.status_code == 200:
-        print("Successfully sent data to Airtable")
+        logging.info("Successfully sent data to Airtable")
     else:
-        print(f"Failed to send data to Airtable: {response.status_code}, {response.text}")
+        logging.error("Failed to send data to Airtable: %s, %s", response.status_code, response.text)
 
 def process_pdf(pdf_url, record_id):
-    # Create a 'downloads' directory if it doesn't exist
-    os.makedirs('downloads', exist_ok=True)
+    try:
+        # Create a 'downloads' directory if it doesn't exist
+        os.makedirs('downloads', exist_ok=True)
 
-    # Define the path to save the downloaded PDF
-    pdf_path = os.path.join('downloads', 'downloaded_pdf.pdf')
-    print(pdf_path)
+        # Define the path to save the downloaded PDF
+        pdf_path = os.path.join('downloads', 'downloaded_pdf.pdf')
+        logging.debug("Downloading PDF to: %s", pdf_path)
 
-    # Download PDF from the provided URL
-    pdf_path = download_pdf(pdf_url, 'downloads')
+        # Download PDF from the provided URL
+        pdf_path = download_pdf(pdf_url, 'downloads')
 
-    # Extract text from the downloaded PDF
-    output_dir = 'output'
-    text_file_path = extract_pdf_content(pdf_path, output_dir)
+        # Extract text from the downloaded PDF
+        output_dir = 'output'
+        text_file_path = extract_pdf_content(pdf_path, output_dir)
 
-    if text_file_path:
-        # Upload extracted content to Gemini
-        files = upload_to_gemini(output_dir)
+        if text_file_path:
+            # Upload extracted content to Gemini
+            files = upload_to_gemini(output_dir)
 
-        # Read the assessment text directly from the text file
-        assessment_text_path = os.path.join(output_dir, 'text.txt')
-        with open(assessment_text_path, 'r') as file:
-            assessment_text = file.read()
+            # Read the assessment text directly from the text file
+            assessment_text_path = os.path.join(output_dir, 'text.txt')
+            with open(assessment_text_path, 'r') as file:
+                assessment_text = file.read()
 
-        # Summarize content using Gemini
-        summary = summarize_content([assessment_text])
-        print(summary)
+            # Summarize content using Gemini
+            summary = summarize_content([assessment_text])
+            logging.debug("Summary: %s", summary)
 
-        # Send summary to Airtable
-        send_to_airtable(record_id, summary)
-    else:
-        print("Extraction failed. Please check the PDF file.")
+            # Send summary to Airtable
+            send_to_airtable(record_id, summary)
+        else:
+            logging.error("Extraction failed. Please check the PDF file.")
+    except Exception as e:
+        logging.exception("An error occurred during PDF processing: %s", e)
 
 @app.route('/process_pdf', methods=['POST'])
 def process_pdf_route():
-    data = request.get_json()
-    pdf_url = data.get('pdf_url')
-    record_id = data.get('record_id')
+    try:
+        data = request.get_json()
+        pdf_url = data.get('pdfUrl')
+        record_id = data.get('recordId')
 
-    if pdf_url and record_id:
-        process_pdf(pdf_url, record_id)
-        return jsonify({"status": "processing started"}), 200
-    else:
-        return jsonify({"error": "Missing pdf_url or record_id"}), 400
+        if pdf_url and record_id:
+            logging.debug("Received pdfUrl: %s, recordId: %s", pdf_url, record_id)
+            process_pdf(pdf_url, record_id)
+            return jsonify({"status": "processing started"}), 200
+        else:
+            logging.error("Missing pdf_url or record_id in the request data")
+            return jsonify({"error": "Missing pdf_url or record_id"}), 400
+    except Exception as e:
+        logging.exception("An error occurred while processing the request: %s", e)
+        return jsonify({"error": str(e)}), 500
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000)
+    app.run(host='0.0.0.0', port=10000)
