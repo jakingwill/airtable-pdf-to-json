@@ -81,7 +81,7 @@ def summarize_content(files, custom_prompt):
     # Prepare prompt with text and image references
     prompt = [custom_prompt]
     prompt.extend(files)
-    prompt.append("[END]\n\nYou are a document entity extraction specialist for a school that gives you assessments. Given an assessment, your task is to extract the text value of the following entities:\n{\n \"question\": [\n  {\n   \"question_number\": \"\",\n   \"total_marks\": \"\",\n   \"question_text\": \"\",\n   \"marking_guide\": \"\"\n  }\n ],\n \"answer\": [\n  {\n   \"question_number\": \"\",\n   \"student_answer\": \"\"\n  }\n ],\n}\n\n- The JSON schema must be followed during the extraction.\n- The values must only include text strings found in the document.\n- Generate null for missing entities.")
+    prompt.append("[END]\n\nHere is the document")
 
     # Generate content using Gemini
     model = genai.GenerativeModel(model_name='gemini-1.5-flash')
