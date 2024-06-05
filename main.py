@@ -77,9 +77,9 @@ def upload_to_gemini(output_dir):
     return files
 
 # Define function to summarize content using Gemini
-def summarize_content(files):
+def summarize_content(files, custom_prompt):
     # Prepare prompt with text and image references
-    prompt = ['here is the assessment file']
+    prompt = [custom_prompt]
     prompt.extend(files)
     prompt.append("[END]\n\nYou are a document entity extraction specialist for a school that gives you assessments. Given an assessment, your task is to extract the text value of the following entities:\n{\n \"question\": [\n  {\n   \"question_number\": \"\",\n   \"total_marks\": \"\",\n   \"question_text\": \"\",\n   \"marking_guide\": \"\"\n  }\n ],\n \"answer\": [\n  {\n   \"question_number\": \"\",\n   \"student_answer\": \"\"\n  }\n ],\n}\n\n- The JSON schema must be followed during the extraction.\n- The values must only include text strings found in the document.\n- Generate null for missing entities.")
 
@@ -102,11 +102,12 @@ def send_to_airtable(record_id, summary):
         print(f"Failed to send data to Airtable: {response.status_code}, {response.text}")
 
 # Function to process the PDF asynchronously
-def process_pdf_async(pdf_url, record_id):
+def process_pdf_async(pdf_url, record_id, custom_prompt):
     def process():
         try:
             print(f"Received pdf_url: {pdf_url}")
             print(f"Received record_id: {record_id}")
+            print(f"Received custom_prompt: {custom_prompt}")
 
             # Create a 'downloads' directory if it doesn't exist
             os.makedirs('downloads', exist_ok=True)
@@ -131,8 +132,8 @@ def process_pdf_async(pdf_url, record_id):
                 with open(assessment_text_path, 'r') as file:
                     assessment_text = file.read()
 
-                # Summarize content using Gemini
-                summary = summarize_content([assessment_text])
+                # Summarize content using Gemini with custom prompt
+                summary = summarize_content([assessment_text], custom_prompt)
                 print(summary)
 
                 # Send summary to Airtable
@@ -152,6 +153,7 @@ def process_pdf_route():
     print(f"Received data: {data}")
     pdf_url = data.get('pdf_url')
     record_id = data.get('record_id')
+    custom_prompt = data.get('custom_prompt')
 
     if not pdf_url:
         print("Missing pdf_url")
@@ -159,7 +161,7 @@ def process_pdf_route():
         print("Missing record_id")
 
     if pdf_url and record_id:
-        process_pdf_async(pdf_url, record_id)
+        process_pdf_async(pdf_url, record_id, custom_prompt)
         return jsonify({"status": "processing started"}), 200
     else:
         return jsonify({"error": "Missing pdf_url or record_id"}), 400
