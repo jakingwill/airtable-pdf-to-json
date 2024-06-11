@@ -4,6 +4,7 @@ import google.generativeai as genai
 import requests
 from flask import Flask, request, jsonify
 from threading import Thread
+import uuid
 
 app = Flask(__name__)
 
@@ -119,16 +120,18 @@ def process_pdf_async(pdf_url, record_id, custom_prompt):
             # Download PDF from the provided URL
             pdf_path = download_pdf(pdf_url, 'downloads')
 
+            # Create a unique subdirectory for this request
+            unique_output_dir = os.path.join('output', str(uuid.uuid4()))
+            
             # Extract text from the downloaded PDF
-            output_dir = 'output'
-            text_file_path = extract_pdf_content(pdf_path, output_dir)
+            text_file_path = extract_pdf_content(pdf_path, unique_output_dir)
 
             if text_file_path:
                 # Upload extracted content to Gemini
-                files = upload_to_gemini(output_dir)
+                files = upload_to_gemini(unique_output_dir)
 
                 # Read the assessment text directly from the text file
-                assessment_text_path = os.path.join(output_dir, 'text.txt')
+                assessment_text_path = os.path.join(unique_output_dir, 'text.txt')
                 with open(assessment_text_path, 'r') as file:
                     assessment_text = file.read()
 
