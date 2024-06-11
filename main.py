@@ -43,7 +43,7 @@ def extract_pdf_content(pdf_path, output_dir):
 def download_pdf(pdf_url, download_folder):
     response = requests.get(pdf_url)
     if response.status_code == 200:
-        file_path = os.path.join(download_folder, os.path.basename(pdf_url))
+        file_path = os.path.join(download_folder, 'downloaded_pdf.pdf')
         with open(file_path, 'wb') as file:
             file.write(response.content)
         return file_path
@@ -96,7 +96,7 @@ def send_to_airtable(record_id, summary):
         "record_id": record_id,
         "summary": summary
     }
-    response = requests.post(webhook_url, json=data)
+    response = requests.post(webhook_url, json(data))
     if response.status_code == 200:
         print("Successfully sent data to Airtable")
     else:
@@ -110,28 +110,28 @@ def process_pdf_async(pdf_url, record_id, custom_prompt):
             print(f"Received record_id: {record_id}")
             print(f"Received custom_prompt: {custom_prompt}")
 
-            # Create a 'downloads' directory if it doesn't exist
-            os.makedirs('downloads', exist_ok=True)
+            # Create unique directory for each request
+            unique_id = str(uuid.uuid4())
+            request_dir = os.path.join('requests', unique_id)
+            os.makedirs(request_dir, exist_ok=True)
 
             # Define the path to save the downloaded PDF
-            pdf_path = os.path.join('downloads', 'downloaded_pdf.pdf')
+            pdf_path = os.path.join(request_dir, 'downloaded_pdf.pdf')
             print(pdf_path)
 
             # Download PDF from the provided URL
-            pdf_path = download_pdf(pdf_url, 'downloads')
+            pdf_path = download_pdf(pdf_url, request_dir)
 
-            # Create a unique subdirectory for this request
-            unique_output_dir = os.path.join('output', str(uuid.uuid4()))
-            
             # Extract text from the downloaded PDF
-            text_file_path = extract_pdf_content(pdf_path, unique_output_dir)
+            output_dir = os.path.join(request_dir, 'output')
+            text_file_path = extract_pdf_content(pdf_path, output_dir)
 
             if text_file_path:
                 # Upload extracted content to Gemini
-                files = upload_to_gemini(unique_output_dir)
+                files = upload_to_gemini(output_dir)
 
                 # Read the assessment text directly from the text file
-                assessment_text_path = os.path.join(unique_output_dir, 'text.txt')
+                assessment_text_path = os.path.join(output_dir, 'text.txt')
                 with open(assessment_text_path, 'r') as file:
                     assessment_text = file.read()
 
