@@ -2,6 +2,7 @@ import os
 import subprocess
 import google.generativeai as genai
 import requests
+import json
 from flask import Flask, request, jsonify
 from threading import Thread
 import uuid
@@ -37,8 +38,8 @@ def extract_pdf_content(pdf_path, output_dir):
     # Extract text using pdftotext for the full PDF
     subprocess.run(['pdftotext', pdf_path, os.path.join(output_dir, 'text.txt')])
 
-    # Return the path of the extracted text file
-    return os.path.join(output_dir, 'text.txt')
+    # Return the list of extracted image file paths
+    return [os.path.join(output_dir, f) for f in os.listdir(output_dir) if f.startswith('images-')]
 
 def download_pdf(pdf_url, download_folder):
     response = requests.get(pdf_url)
@@ -51,29 +52,17 @@ def download_pdf(pdf_url, download_folder):
         raise Exception(f"Failed to download PDF, status code: {response.status_code}")
 
 # Define function to upload extracted content to Gemini
-def upload_to_gemini(output_dir):
+def upload_to_gemini(image_files):
     files = []
 
-    # Print list of files in output directory for debugging
-    print("Files in output directory:")
-    print(os.listdir(output_dir))
+    # Print list of image files for debugging
+    print("Image files to upload:")
+    print(image_files)
 
     # Upload image files to Gemini
-    for filename in sorted(os.listdir(output_dir)):
-        if filename.startswith('images-'):
-            image_file_path = os.path.join(output_dir, filename)
-            image_gemini_file = upload_image_to_gemini(image_file_path)
-            files.append(image_gemini_file)
-
-    # Upload text file to Gemini
-    text_file_path = os.path.join(output_dir, 'text.txt')
-    if os.path.exists(text_file_path):
-        with open(text_file_path, 'r') as file:
-            text_content = file.read()
-            text_gemini_file = upload_text_to_gemini(text_content)
-            files.append(text_gemini_file)
-    else:
-        print("Error: Text file not found.")
+    for image_file_path in image_files:
+        image_gemini_file = upload_image_to_gemini(image_file_path)
+        files.append(image_gemini_file)
 
     return files
 
@@ -96,7 +85,7 @@ def send_to_airtable(record_id, summary):
         "record_id": record_id,
         "summary": summary
     }
-    response = requests.post(webhook_url, json(data))
+    response = requests.post(webhook_url, json=data)
     if response.status_code == 200:
         print("Successfully sent data to Airtable")
     else:
@@ -122,13 +111,13 @@ def process_pdf_async(pdf_url, record_id, custom_prompt):
             # Download PDF from the provided URL
             pdf_path = download_pdf(pdf_url, request_dir)
 
-            # Extract text from the downloaded PDF
+            # Extract images from the downloaded PDF
             output_dir = os.path.join(request_dir, 'output')
-            text_file_path = extract_pdf_content(pdf_path, output_dir)
+            image_files = extract_pdf_content(pdf_path, output_dir)
 
-            if text_file_path:
+            if image_files:
                 # Upload extracted content to Gemini
-                files = upload_to_gemini(output_dir)
+                files = upload_to_gemini(image_files)
 
                 # Read the assessment text directly from the text file
                 assessment_text_path = os.path.join(output_dir, 'text.txt')
@@ -136,7 +125,7 @@ def process_pdf_async(pdf_url, record_id, custom_prompt):
                     assessment_text = file.read()
 
                 # Summarize content using Gemini with custom prompt
-                summary = summarize_content([assessment_text], custom_prompt)
+                summary = summarize_content(files + [assessment_text], custom_prompt)
                 print(summary)
 
                 # Send summary to Airtable
