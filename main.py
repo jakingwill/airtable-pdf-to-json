@@ -12,12 +12,8 @@ app = Flask(__name__)
 
 # Initialize Gemini API client with your API key
 gemini_api_key = os.getenv('GEMINI_API_KEY')
-genai.configure(api_key=gemini_api_key)
-airtable_webhook_url = os.getenv('AIRTABLE_WEBHOOK')
-
-def upload_image_to_gemini(image_file_path):
-    response = genai.upload_file(image_file_path)
-    return response.uri
+client = genai.configure(api_key=gemini_api_key)
+airtable_webhook_url = os.environ['AIRTABLE_WEBHOOK']
 
 def extract_pdf_content(pdf_path, output_dir):
     output_dir = pathlib.Path(output_dir)
@@ -44,23 +40,25 @@ def download_pdf(pdf_url, download_folder):
 
 def upload_to_gemini(image_files):
     files = []
-    for image_file_path in tqdm.tqdm(image_files):
-        image_gemini_file = upload_image_to_gemini(image_file_path)
-        files.append(image_gemini_file)
+    for img in tqdm.tqdm(image_files):
+        file = genai.upload_file(path=str(img), display_name=f"Page {pathlib.Path(img).stem}")
+        files.append(file)
+        print(f"Uploaded {img} as {file.uri}")
     return files
 
 def summarize_content(files, custom_prompt):
-    prompt = [custom_prompt] + files + ["[END]\n\nPlease extract the text from these images."]
+    prompt = [custom_prompt] + [file for file in files] + ["[END]\n\nPlease extract the text from these images."]
     model = genai.GenerativeModel(model_name='models/gemini-1.5-flash')
     response = model.generate_content(prompt)
     return response.text
 
 def send_to_airtable(record_id, summary):
+    webhook_url = airtable_webhook_url
     data = {
         "record_id": record_id,
         "summary": summary
     }
-    response = requests.post(airtable_webhook_url, json=data)
+    response = requests.post(webhook_url, json=data)
     if response.status_code == 200:
         print("Successfully sent data to Airtable")
     else:
@@ -79,8 +77,12 @@ def process_pdf_async(pdf_url, record_id, custom_prompt):
 
             if image_files:
                 files = upload_to_gemini(image_files)
-                summary = summarize_content(files, custom_prompt)
-                send_to_airtable(record_id, summary)
+                if files:
+                    summary = summarize_content(files, custom_prompt)
+                    print(f"Summary for record_id {record_id}:\n{summary}")
+                    send_to_airtable(record_id, summary)
+                else:
+                    print("No files uploaded to Gemini.")
             else:
                 print("Extraction failed. Please check the PDF file.")
         except Exception as e:
