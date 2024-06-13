@@ -20,23 +20,25 @@ def upload_image_to_gemini(image_file_path):
     return response.uri
 
 def extract_pdf_content(pdf_path, output_dir):
-    os.makedirs(output_dir, exist_ok=True)
+    output_dir = pathlib.Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
     pdf_document = fitz.open(pdf_path)
     for page_num in range(len(pdf_document)):
         page = pdf_document.load_page(page_num)
         pix = page.get_pixmap()
-        image_filename = f"{output_dir}/image-{page_num + 1}.jpg"
+        image_filename = output_dir / f"image-{page_num + 1}.jpg"
         pix.save(image_filename)
         print(f"Saved {image_filename}")
-    return [os.path.join(output_dir, f) for f in os.listdir(output_dir) if f.endswith('.jpg')]
+    return [str(f) for f in output_dir.glob('*.jpg')]
 
 def download_pdf(pdf_url, download_folder):
+    download_folder = pathlib.Path(download_folder)
     response = requests.get(pdf_url)
     if response.status_code == 200:
-        file_path = os.path.join(download_folder, 'downloaded_pdf.pdf')
-        with open(file_path, 'wb') as file:
+        file_path = download_folder / 'downloaded_pdf.pdf'
+        with file_path.open('wb') as file:
             file.write(response.content)
-        return file_path
+        return str(file_path)
     else:
         raise Exception(f"Failed to download PDF, status code: {response.status_code}")
 
@@ -68,11 +70,11 @@ def process_pdf_async(pdf_url, record_id, custom_prompt):
     def process():
         try:
             unique_id = str(uuid.uuid4())
-            request_dir = os.path.join('requests', unique_id)
-            os.makedirs(request_dir, exist_ok=True)
+            request_dir = pathlib.Path('requests') / unique_id
+            request_dir.mkdir(parents=True, exist_ok=True)
 
             pdf_path = download_pdf(pdf_url, request_dir)
-            output_dir = os.path.join(request_dir, 'output')
+            output_dir = request_dir / 'output'
             image_files = extract_pdf_content(pdf_path, output_dir)
 
             if image_files:
