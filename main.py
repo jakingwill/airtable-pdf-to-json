@@ -2,7 +2,6 @@ import os
 import subprocess
 import google.generativeai as genai
 import requests
-import json
 from flask import Flask, request, jsonify
 from threading import Thread
 import uuid
@@ -11,34 +10,16 @@ app = Flask(__name__)
 
 # Initialize Gemini API client with your API key
 gemini_api_key = os.environ['GEMINI_API_KEY']
-client = genai.configure(api_key=gemini_api_key)
+genai.configure(api_key=gemini_api_key)
 airtable_webhook_url = os.environ['AIRTABLE_WEBHOOK']
 
-# Define functions to upload text and image files to Gemini
-def upload_text_to_gemini(text_content):
-    with open('temp_text.txt', 'w') as file:
-        file.write(text_content)
-    response = genai.upload_file('temp_text.txt')
-    os.remove('temp_text.txt')
-    return response.uri
-
 def upload_image_to_gemini(image_file_path):
-    with open(image_file_path, 'rb') as file:
-        response = genai.upload_file(image_file_path)
+    response = genai.upload_file(image_file_path)
     return response.uri
 
-# Define function to extract text and images from PDF
 def extract_pdf_content(pdf_path, output_dir):
-    # Create output directory if it doesn't exist
     os.makedirs(output_dir, exist_ok=True)
-
-    # Extract images using pdftoppm for the full PDF
     subprocess.run(['pdftoppm', '-jpeg', pdf_path, os.path.join(output_dir, 'images')])
-
-    # Extract text using pdftotext for the full PDF
-    subprocess.run(['pdftotext', pdf_path, os.path.join(output_dir, 'text.txt')])
-
-    # Return the list of extracted image file paths
     return [os.path.join(output_dir, f) for f in os.listdir(output_dir) if f.startswith('images-')]
 
 def download_pdf(pdf_url, download_folder):
@@ -51,32 +32,17 @@ def download_pdf(pdf_url, download_folder):
     else:
         raise Exception(f"Failed to download PDF, status code: {response.status_code}")
 
-# Define function to upload extracted content to Gemini
 def upload_to_gemini(image_files):
     files = []
-
-    # Print list of image files for debugging
-    print("Image files to upload:")
-    print(image_files)
-
-    # Upload image files to Gemini
     for image_file_path in image_files:
         image_gemini_file = upload_image_to_gemini(image_file_path)
         files.append(image_gemini_file)
-
     return files
 
-# Define function to summarize content using Gemini
 def summarize_content(files, custom_prompt):
-    # Prepare prompt with text and image references
-    prompt = [custom_prompt]
-    prompt.extend(files)
-    prompt.append("[END]\n\nHere is the document")
-
-    # Generate content using Gemini
+    prompt = [custom_prompt] + files + ["[END]\n\nPlease summarize the text from these images."]
     model = genai.GenerativeModel(model_name='gemini-1.5-flash')
     response = model.generate_content(prompt)
-
     return response.text
 
 def send_to_airtable(record_id, summary):
@@ -91,66 +57,35 @@ def send_to_airtable(record_id, summary):
     else:
         print(f"Failed to send data to Airtable: {response.status_code}, {response.text}")
 
-# Function to process the PDF asynchronously
 def process_pdf_async(pdf_url, record_id, custom_prompt):
     def process():
         try:
-            print(f"Received pdf_url: {pdf_url}")
-            print(f"Received record_id: {record_id}")
-            print(f"Received custom_prompt: {custom_prompt}")
-
-            # Create unique directory for each request
             unique_id = str(uuid.uuid4())
             request_dir = os.path.join('requests', unique_id)
             os.makedirs(request_dir, exist_ok=True)
 
-            # Define the path to save the downloaded PDF
-            pdf_path = os.path.join(request_dir, 'downloaded_pdf.pdf')
-            print(pdf_path)
-
-            # Download PDF from the provided URL
             pdf_path = download_pdf(pdf_url, request_dir)
-
-            # Extract images from the downloaded PDF
             output_dir = os.path.join(request_dir, 'output')
             image_files = extract_pdf_content(pdf_path, output_dir)
 
             if image_files:
-                # Upload extracted content to Gemini
                 files = upload_to_gemini(image_files)
-
-                # Read the assessment text directly from the text file
-                assessment_text_path = os.path.join(output_dir, 'text.txt')
-                with open(assessment_text_path, 'r') as file:
-                    assessment_text = file.read()
-
-                # Summarize content using Gemini with custom prompt
-                summary = summarize_content(files + [assessment_text], custom_prompt)
-                print(summary)
-
-                # Send summary to Airtable
+                summary = summarize_content(files, custom_prompt)
                 send_to_airtable(record_id, summary)
             else:
                 print("Extraction failed. Please check the PDF file.")
         except Exception as e:
             print(f"An error occurred during processing: {e}")
 
-    # Start a new thread to process the PDF
     thread = Thread(target=process)
     thread.start()
 
 @app.route('/process_pdf', methods=['POST'])
 def process_pdf_route():
     data = request.get_json()
-    print(f"Received data: {data}")
     pdf_url = data.get('pdf_url')
     record_id = data.get('record_id')
     custom_prompt = data.get('custom_prompt')
-
-    if not pdf_url:
-        print("Missing pdf_url")
-    if not record_id:
-        print("Missing record_id")
 
     if pdf_url and record_id:
         process_pdf_async(pdf_url, record_id, custom_prompt)
