@@ -1,17 +1,19 @@
 import os
-import subprocess
 import google.generativeai as genai
 import requests
 from flask import Flask, request, jsonify
 from threading import Thread
 import uuid
+import fitz  # PyMuPDF
+import pathlib
+import tqdm
 
 app = Flask(__name__)
 
 # Initialize Gemini API client with your API key
-gemini_api_key = os.environ['GEMINI_API_KEY']
+gemini_api_key = os.getenv('GEMINI_API_KEY')
 genai.configure(api_key=gemini_api_key)
-airtable_webhook_url = os.environ['AIRTABLE_WEBHOOK']
+airtable_webhook_url = os.getenv('AIRTABLE_WEBHOOK')
 
 def upload_image_to_gemini(image_file_path):
     response = genai.upload_file(image_file_path)
@@ -19,8 +21,14 @@ def upload_image_to_gemini(image_file_path):
 
 def extract_pdf_content(pdf_path, output_dir):
     os.makedirs(output_dir, exist_ok=True)
-    subprocess.run(['pdftoppm', '-jpeg', pdf_path, os.path.join(output_dir, 'images')])
-    return [os.path.join(output_dir, f) for f in os.listdir(output_dir) if f.startswith('images-')]
+    pdf_document = fitz.open(pdf_path)
+    for page_num in range(len(pdf_document)):
+        page = pdf_document.load_page(page_num)
+        pix = page.get_pixmap()
+        image_filename = f"{output_dir}/image-{page_num + 1}.jpg"
+        pix.save(image_filename)
+        print(f"Saved {image_filename}")
+    return [os.path.join(output_dir, f) for f in os.listdir(output_dir) if f.endswith('.jpg')]
 
 def download_pdf(pdf_url, download_folder):
     response = requests.get(pdf_url)
@@ -34,24 +42,23 @@ def download_pdf(pdf_url, download_folder):
 
 def upload_to_gemini(image_files):
     files = []
-    for image_file_path in image_files:
+    for image_file_path in tqdm.tqdm(image_files):
         image_gemini_file = upload_image_to_gemini(image_file_path)
         files.append(image_gemini_file)
     return files
 
 def summarize_content(files, custom_prompt):
-    prompt = [custom_prompt] + files + ["[END]\n\nPlease summarize the text from these images."]
-    model = genai.GenerativeModel(model_name='gemini-1.5-flash')
+    prompt = [custom_prompt] + files + ["[END]\n\nPlease extract the text from these images."]
+    model = genai.GenerativeModel(model_name='models/gemini-1.5-flash')
     response = model.generate_content(prompt)
     return response.text
 
 def send_to_airtable(record_id, summary):
-    webhook_url = airtable_webhook_url
     data = {
         "record_id": record_id,
         "summary": summary
     }
-    response = requests.post(webhook_url, json=data)
+    response = requests.post(airtable_webhook_url, json=data)
     if response.status_code == 200:
         print("Successfully sent data to Airtable")
     else:
