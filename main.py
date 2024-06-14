@@ -47,18 +47,24 @@ def upload_to_gemini(image_files):
     return files
 
 def summarize_content(files, custom_prompt, response_schema):
-    prompt = [custom_prompt] + [file.uri for file in files] + ["[END]\n\nPlease extract the text from these images."]
+    prompt = [custom_prompt] + [file for file in files] + ["[END]\n\nPlease extract the text from these images."]
     model = genai.GenerativeModel(model_name='models/gemini-1.5-flash')
-    
+
     # Use GenerationConfig to get JSON response with the desired schema
     generation_config = genai.GenerationConfig(
         response_mime_type='application/json',
         response_schema=response_schema
     )
-    
+
     response = model.generate_content(prompt, generation_config=generation_config)
-    # Access the 'question' attribute from the response correctly
-    return response
+
+    # Print the full response from the Gemini API for debugging purposes
+    print(f"Full response from Gemini API: {response}")
+
+    # Extract the JSON content from the response
+    json_response = response.candidates[0].content.parts[0].text
+    print(f"Extracted JSON response: {json_response}")
+    return json_response
 
 def send_to_airtable(record_id, summary):
     webhook_url = airtable_webhook_url
