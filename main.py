@@ -46,11 +46,19 @@ def upload_to_gemini(image_files):
         print(f"Uploaded {img} as {file.uri}")
     return files
 
-def summarize_content(files, custom_prompt):
-    prompt = [custom_prompt] + [file for file in files] + ["[END]\n\nPlease extract the text from these images."]
+def summarize_content(files, custom_prompt, response_schema):
+    prompt = [custom_prompt] + [file.uri for file in files] + ["[END]\n\nPlease extract the text from these images."]
     model = genai.GenerativeModel(model_name='models/gemini-1.5-flash')
-    response = model.generate_content(prompt)
-    return response.text
+    
+    # Use GenerationConfig to get JSON response with the desired schema
+    generation_config = genai.GenerationConfig(
+        response_mime_type='application/json',
+        response_schema=response_schema
+    )
+    
+    response = model.generate_content(prompt, generation_config=generation_config)
+    # Access the 'question' attribute from the response correctly
+    return response
 
 def send_to_airtable(record_id, summary):
     webhook_url = airtable_webhook_url
@@ -64,7 +72,7 @@ def send_to_airtable(record_id, summary):
     else:
         print(f"Failed to send data to Airtable: {response.status_code}, {response.text}")
 
-def process_pdf_async(pdf_url, record_id, custom_prompt):
+def process_pdf_async(pdf_url, record_id, custom_prompt, response_schema):
     def process():
         try:
             unique_id = str(uuid.uuid4())
@@ -78,7 +86,7 @@ def process_pdf_async(pdf_url, record_id, custom_prompt):
             if image_files:
                 files = upload_to_gemini(image_files)
                 if files:
-                    summary = summarize_content(files, custom_prompt)
+                    summary = summarize_content(files, custom_prompt, response_schema)
                     print(f"Summary for record_id {record_id}:\n{summary}")
                     send_to_airtable(record_id, summary)
                 else:
@@ -97,12 +105,13 @@ def process_pdf_route():
     pdf_url = data.get('pdf_url')
     record_id = data.get('record_id')
     custom_prompt = data.get('custom_prompt')
+    response_schema = data.get('response_schema')
 
-    if pdf_url and record_id:
-        process_pdf_async(pdf_url, record_id, custom_prompt)
+    if pdf_url and record_id and response_schema:
+        process_pdf_async(pdf_url, record_id, custom_prompt, response_schema)
         return jsonify({"status": "processing started"}), 200
     else:
-        return jsonify({"error": "Missing pdf_url or record_id"}), 400
+        return jsonify({"error": "Missing pdf_url, record_id, or response_schema"}), 400
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=10000)
