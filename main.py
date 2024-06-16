@@ -116,10 +116,18 @@ def process_pdf_route():
     custom_prompt = data.get('custom_prompt')
     response_schema = data.get('response_schema')
 
+    print(f"Received response_schema (raw): {response_schema}")  # Debug print
+
     if pdf_url and record_id and response_schema:
-        response_schema = json.loads(response_schema)  # Convert JSON string to dictionary
-        process_pdf_async(pdf_url, record_id, custom_prompt, response_schema)
-        return jsonify({"status": "processing started"}), 200
+        try:
+            if isinstance(response_schema, str):
+                response_schema = json.loads(response_schema)  # Convert JSON string to dictionary
+            print(f"Parsed response_schema: {response_schema}")
+            process_pdf_async(pdf_url, record_id, custom_prompt, response_schema)
+            return jsonify({"status": "processing started"}), 200
+        except json.JSONDecodeError as e:
+            print(f"JSON decoding error: {e}")  # Debug print for JSON decoding errors
+            return jsonify({"error": "Invalid JSON format in response_schema"}), 400
     else:
         return jsonify({"error": "Missing pdf_url, record_id, or response_schema"}), 400
 
