@@ -7,6 +7,7 @@ import uuid
 import fitz  # PyMuPDF
 import pathlib
 import tqdm
+import json
 
 app = Flask(__name__)
 
@@ -43,7 +44,7 @@ def upload_to_gemini(image_files):
     for img in tqdm.tqdm(image_files):
         file = genai.upload_file(path=str(img), display_name=f"Page {pathlib.Path(img).stem}")
         files.append(file)
-        print(f"Uploaded {img} as {file.uri}")
+        print(f"Uploaded {img}")
     return files
 
 def summarize_content(files, custom_prompt, response_schema):
@@ -60,6 +61,8 @@ def summarize_content(files, custom_prompt, response_schema):
 
     # Print the full response from the Gemini API for debugging purposes
     print(f"Full response from Gemini API: {response}")
+    print(f"Response type: {type(response)}")
+    print(f"Response content: {response.candidates}")
 
     # Extract the JSON content from the response
     json_response = response.candidates[0].content.parts[0].text
@@ -114,6 +117,7 @@ def process_pdf_route():
     response_schema = data.get('response_schema')
 
     if pdf_url and record_id and response_schema:
+        response_schema = json.loads(response_schema)  # Convert JSON string to dictionary
         process_pdf_async(pdf_url, record_id, custom_prompt, response_schema)
         return jsonify({"status": "processing started"}), 200
     else:
