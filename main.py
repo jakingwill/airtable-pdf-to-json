@@ -1,19 +1,20 @@
 import os
 import google.generativeai as genai
 import requests
-from flask import Flask, request, jsonify, render_template
+from flask import Flask, request, jsonify
 from threading import Thread
 import uuid
 import fitz  # PyMuPDF
 import pathlib
 import tqdm
 import json
+import tempfile
 
 app = Flask(__name__)
 
 # Initialize Gemini API client with your API key
 gemini_api_key = os.getenv('GEMINI_API_KEY')
-client = genai.configure(api_key=gemini_api_key)
+genai.configure(api_key=gemini_api_key)
 airtable_webhook_url = os.environ['AIRTABLE_WEBHOOK']
 
 def extract_pdf_content(pdf_path, output_dir):
@@ -88,43 +89,44 @@ def send_to_airtable(record_id, summary):
 def process_pdf_async(pdf_url, record_id, custom_prompt, response_schema):
     def process():
         try:
-            unique_id = str(uuid.uuid4())
-            request_dir = pathlib.Path('requests') / unique_id
-            request_dir.mkdir(parents=True, exist_ok=True)
+            with tempfile.TemporaryDirectory() as temp_dir:
+                request_dir = pathlib.Path(temp_dir)
 
-            pdf_path = download_pdf(pdf_url, request_dir)
-            output_dir = request_dir / 'output'
-            output_dir.mkdir(exist_ok=True)
+                pdf_path = download_pdf(pdf_url, request_dir)
+                output_dir = request_dir / 'output'
+                output_dir.mkdir(exist_ok=True)
 
-            # Extract content and save as images
-            full_text, image_files = extract_pdf_content(pdf_path, output_dir)
+                # Extract content and save as images
+                full_text, image_files = extract_pdf_content(pdf_path, output_dir)
 
-            if image_files:
-                files = upload_to_gemini(image_files)
-                if files:
-                    json_response, extracted_text = summarize_content(files, custom_prompt, response_schema)
+                if image_files:
+                    files = upload_to_gemini(image_files)
+                    if files:
+                        json_response, extracted_text = summarize_content(files, custom_prompt, response_schema)
 
-                    # Save extracted text to a file
-                    text_file_path = output_dir / 'extracted_text.txt'
-                    with open(text_file_path, 'w', encoding='utf-8') as f:
-                        f.write(extracted_text)
+                        # Save extracted text to a file
+                        text_file_path = output_dir / 'extracted_text.txt'
+                        with open(text_file_path, 'w', encoding='utf-8') as f:
+                            f.write(extracted_text)
 
-                    print(f"Extracted JSON response: {json_response}")
-                    send_to_airtable(record_id, json_response)
+                        print(f"Extracted JSON response: {json_response}")
+                        send_to_airtable(record_id, json_response)
+                    else:
+                        error_message = "No files uploaded to Gemini."
+                        print(error_message)
+                        send_to_airtable(record_id, {"error": error_message})
                 else:
-                    print("No files uploaded to Gemini.")
-            else:
-                print("Extraction failed. Please check the PDF file.")
+                    error_message = "Extraction failed. Please check the PDF file."
+                    print(error_message)
+                    send_to_airtable(record_id, {"error": error_message})
 
         except Exception as e:
-            print(f"An error occurred during processing: {e}")
+            error_message = f"An error occurred during processing: {str(e)}"
+            print(error_message)
+            send_to_airtable(record_id, {"error": error_message})
 
     thread = Thread(target=process)
     thread.start()
-
-@app.route('/')
-def index():
-    return render_template('index.html')
 
 @app.route('/process_pdf', methods=['POST'])
 def process_pdf_route():
@@ -144,4 +146,5 @@ def process_pdf_route():
         return jsonify({"error": "Missing pdf_url, record_id, or response_schema"}), 400
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=8080)
+    port = int(os.environ.get('PORT', 8080))
+    app.run(host='0.0.0.0', port=port)
