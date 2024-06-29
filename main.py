@@ -65,15 +65,7 @@ def upload_to_gemini(image_files):
         print(f"Uploaded {img}")
     return files
 
-def summarize_content(files, custom_prompt, response_schema):
-    # First, extract text from images
-    text_extraction_prompt = "Extract and transcribe all visible text from these images, preserving formatting and structure as much as possible."
-    model = genai.GenerativeModel(model_name='models/gemini-1.5-flash')
-
-    text_extraction_response = model.generate_content([text_extraction_prompt] + files)
-    extracted_text = text_extraction_response.text
-
-    # Now, use the extracted text to generate the structured response
+def summarize_content(extracted_text, custom_prompt, response_schema):
     full_prompt = f"{custom_prompt}\n\nHere's the extracted text from the PDF:\n\n{extracted_text}\n\nPlease extract the information according to the following schema:"
 
     generation_config = genai.GenerationConfig(
@@ -81,10 +73,11 @@ def summarize_content(files, custom_prompt, response_schema):
         response_schema=response_schema
     )
 
+    model = genai.GenerativeModel(model_name='models/gemini-1.5-flash')
     response = model.generate_content(full_prompt, generation_config=generation_config)
     json_response = response.candidates[0].content.parts[0].text
     print(f"Extracted JSON response from Gemini: {json_response}")
-    return json_response, extracted_text
+    return json_response
 
 def send_to_airtable(record_id, summary):
     try:
@@ -115,29 +108,18 @@ def process_pdf_async(pdf_url, record_id, custom_prompt, response_schema):
                 # Extract content and save as images
                 full_text, image_files = extract_pdf_content(pdf_path, output_dir)
 
-                if full_text or image_files:
-                    if image_files:
-                        files = upload_to_gemini(image_files)
-                        if files:
-                            json_response, extracted_text = summarize_content(files, custom_prompt, response_schema)
+                if not full_text and image_files:
+                    files = upload_to_gemini(image_files)
+                    if files:
+                        model = genai.GenerativeModel(model_name='models/gemini-1.5-flash')
+                        text_extraction_prompt = "Extract and transcribe all visible text from these images, preserving formatting and structure as much as possible."
+                        text_extraction_response = model.generate_content([text_extraction_prompt] + files)
+                        full_text = text_extraction_response.text
 
-                            # Print the JSON response from Gemini before sending to Airtable
-                            print(f"JSON response to be sent to Airtable: {json_response}")
-
-                            # Save extracted text to a file
-                            text_file_path = output_dir / 'extracted_text.txt'
-                            with open(text_file_path, 'w', encoding='utf-8') as f:
-                                f.write(extracted_text)
-
-                            print(f"Extracted JSON response: {json_response}")
-                            send_to_airtable(record_id, json_response)
-                        else:
-                            error_message = "No files uploaded to Gemini."
-                            print(error_message)
-                            send_to_airtable(record_id, {"error": error_message})
-                    else:
-                        print(f"Extracted text: {full_text[:100]}")  # Print first 100 characters of extracted text
-                        send_to_airtable(record_id, {"text": full_text})
+                if full_text:
+                    json_response = summarize_content(full_text, custom_prompt, response_schema)
+                    print(f"JSON response to be sent to Airtable: {json_response}")
+                    send_to_airtable(record_id, json_response)
                 else:
                     error_message = "Extraction failed. Please check the PDF file."
                     print(error_message)
