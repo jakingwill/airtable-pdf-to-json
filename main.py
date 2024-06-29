@@ -128,20 +128,20 @@ def index():
 
 @app.route('/process_pdf', methods=['POST'])
 def process_pdf_route():
-    pdf_url = request.form.get('pdf_url')
-    record_id = request.form.get('record_id')
-    custom_prompt = request.form.get('custom_prompt')
-    response_schema = request.form.get('response_schema')
+    data = request.json  # Assuming Airtable sends JSON data
+    pdf_url = data.get('pdf_url')
+    record_id = data.get('record_id')
+    custom_prompt = data.get('custom_prompt')
+    response_schema = data.get('response_schema')
 
     if pdf_url and record_id and response_schema:
         try:
-            response_schema = json.loads(response_schema)
             process_pdf_async(pdf_url, record_id, custom_prompt, response_schema)
-            return "Processing started", 200
+            return jsonify({"status": "processing started"}), 200
         except json.JSONDecodeError:
-            return "Invalid JSON format in response_schema", 400
+            return jsonify({"error": "Invalid JSON format in response_schema"}), 400
     else:
-        return "Missing pdf_url, record_id, or response_schema", 400
+        return jsonify({"error": "Missing pdf_url, record_id, or response_schema"}), 400
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=8080)
