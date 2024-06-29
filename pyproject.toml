@@ -12,6 +12,7 @@ PyMuPDF = "^1.22.5"
 requests = "^2.32.3"
 tqdm = "^4.66.4"
 gunicorn = "^20.1.0"
+fitz = "^0.0.1.dev2"
 
 [tool.poetry.scripts]
 start = "gunicorn main:app"
