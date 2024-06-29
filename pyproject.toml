@@ -6,19 +6,19 @@ authors = ["Your Name <you@example.com>"]
 
 [tool.poetry.dependencies]
 python = ">=3.10.0,<3.12"
-google-generativeai = "^0.5.4"
+fitz = "^0.0.1.dev2"
+flask = "^3.0.3"
+google-generativeai = "^0.7.1"
 requests = "^2.32.3"
-airtable = "^0.4.8"
-flask = "^2.3.3"
-gunicorn = "^20.1.0"
-pymupdf = "^1.20.0"  # Correct package name
 tqdm = "^4.66.4"
 
 [tool.pyright]
+# https://github.com/microsoft/pyright/blob/main/docs/configuration.md
 useLibraryCodeForTypes = true
 exclude = [".cache"]
 
 [tool.ruff]
+# https://beta.ruff.rs/docs/configuration/
 select = ['E', 'W', 'F', 'I', 'B', 'C4', 'ARG', 'SIM']
 ignore = ['W291', 'W292', 'W293']
 
