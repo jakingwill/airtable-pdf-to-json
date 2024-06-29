@@ -15,22 +15,33 @@ app = Flask(__name__)
 # Initialize Gemini API client with your API key
 gemini_api_key = os.getenv('GEMINI_API_KEY')
 genai.configure(api_key=gemini_api_key)
-airtable_webhook_url = os.environ['AIRTABLE_WEBHOOK']
+airtable_webhook_url = os.getenv('AIRTABLE_WEBHOOK')
 
 def extract_pdf_content(pdf_path, output_dir):
     full_text = ""
     image_files = []
-    with fitz.open(pdf_path) as doc:
-        for page_num, page in enumerate(doc):
-            page_text = page.get_text().strip()
-            if page_text:
-                full_text += page_text + "\n\n"
-            else:
-                # If no text extracted, save as image
-                pix = page.get_pixmap()
-                image_filename = output_dir / f"image-{page_num + 1}.jpg"
-                pix.save(image_filename)
-                image_files.append(str(image_filename))
+    try:
+        print(f"Opening PDF: {pdf_path}")
+        with fitz.open(pdf_path) as doc:
+            print(f"Number of pages in PDF: {len(doc)}")
+            for page_num, page in enumerate(doc):
+                try:
+                    print(f"Processing page {page_num + 1}")
+                    page_text = page.get_text().strip()
+                    if page_text:
+                        print(f"Extracted text from page {page_num + 1}: {page_text[:100]}")  # Print first 100 characters
+                        full_text += page_text + "\n\n"
+                    else:
+                        # If no text extracted, save as image
+                        pix = page.get_pixmap()
+                        image_filename = output_dir / f"image-{page_num + 1}.jpg"
+                        pix.save(image_filename)
+                        image_files.append(str(image_filename))
+                        print(f"Saved image for page {page_num + 1}: {image_filename}")
+                except Exception as e:
+                    print(f"Error processing page {page_num + 1}: {e}")
+    except Exception as e:
+        print(f"Error opening PDF: {e}")
 
     return full_text, image_files
 
@@ -41,6 +52,7 @@ def download_pdf(pdf_url, download_folder):
         file_path = download_folder / 'downloaded_pdf.pdf'
         with file_path.open('wb') as file:
             file.write(response.content)
+        print(f"Downloaded PDF to: {file_path}")
         return str(file_path)
     else:
         raise Exception(f"Failed to download PDF, status code: {response.status_code}")
@@ -71,20 +83,24 @@ def summarize_content(files, custom_prompt, response_schema):
 
     response = model.generate_content(full_prompt, generation_config=generation_config)
     json_response = response.candidates[0].content.parts[0].text
-    print(f"Extracted JSON response: {json_response}")
+    print(f"Extracted JSON response from Gemini: {json_response}")
     return json_response, extracted_text
 
 def send_to_airtable(record_id, summary):
-    webhook_url = airtable_webhook_url
-    data = {
-        "record_id": record_id,
-        "summary": summary
-    }
-    response = requests.post(webhook_url, json=data)
-    if response.status_code == 200:
-        print("Successfully sent data to Airtable")
-    else:
-        print(f"Failed to send data to Airtable: {response.status_code}, {response.text}")
+    try:
+        webhook_url = airtable_webhook_url
+        print(f"Webhook URL: {webhook_url}")  # Log the webhook URL
+        data = {
+            "record_id": record_id,
+            "summary": summary
+        }
+        response = requests.post(webhook_url, json=data)
+        if response.status_code == 200:
+            print("Successfully sent data to Airtable")
+        else:
+            print(f"Failed to send data to Airtable: {response.status_code}, {response.text}")
+    except Exception as e:
+        print(f"Error sending data to Airtable: {e}")
 
 def process_pdf_async(pdf_url, record_id, custom_prompt, response_schema):
     def process():
@@ -99,22 +115,29 @@ def process_pdf_async(pdf_url, record_id, custom_prompt, response_schema):
                 # Extract content and save as images
                 full_text, image_files = extract_pdf_content(pdf_path, output_dir)
 
-                if image_files:
-                    files = upload_to_gemini(image_files)
-                    if files:
-                        json_response, extracted_text = summarize_content(files, custom_prompt, response_schema)
+                if full_text or image_files:
+                    if image_files:
+                        files = upload_to_gemini(image_files)
+                        if files:
+                            json_response, extracted_text = summarize_content(files, custom_prompt, response_schema)
 
-                        # Save extracted text to a file
-                        text_file_path = output_dir / 'extracted_text.txt'
-                        with open(text_file_path, 'w', encoding='utf-8') as f:
-                            f.write(extracted_text)
+                            # Print the JSON response from Gemini before sending to Airtable
+                            print(f"JSON response to be sent to Airtable: {json_response}")
 
-                        print(f"Extracted JSON response: {json_response}")
-                        send_to_airtable(record_id, json_response)
+                            # Save extracted text to a file
+                            text_file_path = output_dir / 'extracted_text.txt'
+                            with open(text_file_path, 'w', encoding='utf-8') as f:
+                                f.write(extracted_text)
+
+                            print(f"Extracted JSON response: {json_response}")
+                            send_to_airtable(record_id, json_response)
+                        else:
+                            error_message = "No files uploaded to Gemini."
+                            print(error_message)
+                            send_to_airtable(record_id, {"error": error_message})
                     else:
-                        error_message = "No files uploaded to Gemini."
-                        print(error_message)
-                        send_to_airtable(record_id, {"error": error_message})
+                        print(f"Extracted text: {full_text[:100]}")  # Print first 100 characters of extracted text
+                        send_to_airtable(record_id, {"text": full_text})
                 else:
                     error_message = "Extraction failed. Please check the PDF file."
                     print(error_message)
