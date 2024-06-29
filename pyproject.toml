@@ -1,24 +1,27 @@
 [tool.poetry]
-name = "python-template"
+name = "pdf-to-txt"
 version = "0.1.0"
-description = ""
+description = "A tool to extract text from PDFs and process it with Gemini AI"
 authors = ["Your Name <you@example.com>"]
 
 [tool.poetry.dependencies]
 python = ">=3.10.0,<3.12"
-fitz = "^0.0.1.dev2"
-flask = "^3.0.3"
+Flask = "^3.0.3"
 google-generativeai = "^0.7.1"
+PyMuPDF = "^1.22.5"  # This is the correct package for fitz
 requests = "^2.32.3"
 tqdm = "^4.66.4"
+gunicorn = "^20.1.0"  # Add this for deployment
+fitz = "^0.0.1.dev2"
+
+[tool.poetry.scripts]
+start = "gunicorn main:app"
 
 [tool.pyright]
-# https://github.com/microsoft/pyright/blob/main/docs/configuration.md
 useLibraryCodeForTypes = true
 exclude = [".cache"]
 
 [tool.ruff]
-# https://beta.ruff.rs/docs/configuration/
 select = ['E', 'W', 'F', 'I', 'B', 'C4', 'ARG', 'SIM']
 ignore = ['W291', 'W292', 'W293']
 
