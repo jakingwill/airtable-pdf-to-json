@@ -142,6 +142,10 @@ def process_pdf_route():
     custom_prompt = data.get('custom_prompt')
     response_schema = data.get('response_schema')
 
+    # Convert response_schema from string to dictionary if needed
+    if isinstance(response_schema, str):
+        response_schema = json.loads(response_schema)
+
     if pdf_url and record_id and response_schema:
         try:
             process_pdf_async(pdf_url, record_id, custom_prompt, response_schema)
