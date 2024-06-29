@@ -1,7 +1,7 @@
 import os
 import google.generativeai as genai
 import requests
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, render_template
 from threading import Thread
 import uuid
 import fitz  # PyMuPDF
@@ -17,16 +17,21 @@ client = genai.configure(api_key=gemini_api_key)
 airtable_webhook_url = os.environ['AIRTABLE_WEBHOOK']
 
 def extract_pdf_content(pdf_path, output_dir):
-    output_dir = pathlib.Path(output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
-    pdf_document = fitz.open(pdf_path)
-    for page_num in range(len(pdf_document)):
-        page = pdf_document.load_page(page_num)
-        pix = page.get_pixmap()
-        image_filename = output_dir / f"image-{page_num + 1}.jpg"
-        pix.save(image_filename)
-        print(f"Saved {image_filename}")
-    return [str(f) for f in output_dir.glob('*.jpg')]
+    full_text = ""
+    image_files = []
+    with fitz.open(pdf_path) as doc:
+        for page_num, page in enumerate(doc):
+            page_text = page.get_text().strip()
+            if page_text:
+                full_text += page_text + "\n\n"
+            else:
+                # If no text extracted, save as image
+                pix = page.get_pixmap()
+                image_filename = output_dir / f"image-{page_num + 1}.jpg"
+                pix.save(image_filename)
+                image_files.append(str(image_filename))
+
+    return full_text, image_files
 
 def download_pdf(pdf_url, download_folder):
     download_folder = pathlib.Path(download_folder)
@@ -48,26 +53,25 @@ def upload_to_gemini(image_files):
     return files
 
 def summarize_content(files, custom_prompt, response_schema):
-    prompt = [custom_prompt] + [file for file in files] + ["[END]\n\nPlease extract the text from these images."]
+    # First, extract text from images
+    text_extraction_prompt = "Extract and transcribe all visible text from these images, preserving formatting and structure as much as possible."
     model = genai.GenerativeModel(model_name='models/gemini-1.5-flash')
 
-    # Use GenerationConfig to get JSON response with the desired schema
+    text_extraction_response = model.generate_content([text_extraction_prompt] + files)
+    extracted_text = text_extraction_response.text
+
+    # Now, use the extracted text to generate the structured response
+    full_prompt = f"{custom_prompt}\n\nHere's the extracted text from the PDF:\n\n{extracted_text}\n\nPlease extract the information according to the following schema:"
+
     generation_config = genai.GenerationConfig(
         response_mime_type='application/json',
         response_schema=response_schema
     )
 
-    response = model.generate_content(prompt, generation_config=generation_config)
-
-    # Print the full response from the Gemini API for debugging purposes
-    print(f"Full response from Gemini API: {response}")
-    print(f"Response type: {type(response)}")
-    print(f"Response content: {response.candidates}")
-
-    # Extract the JSON content from the response
+    response = model.generate_content(full_prompt, generation_config=generation_config)
     json_response = response.candidates[0].content.parts[0].text
     print(f"Extracted JSON response: {json_response}")
-    return json_response
+    return json_response, extracted_text
 
 def send_to_airtable(record_id, summary):
     webhook_url = airtable_webhook_url
@@ -90,46 +94,54 @@ def process_pdf_async(pdf_url, record_id, custom_prompt, response_schema):
 
             pdf_path = download_pdf(pdf_url, request_dir)
             output_dir = request_dir / 'output'
-            image_files = extract_pdf_content(pdf_path, output_dir)
+            output_dir.mkdir(exist_ok=True)
+
+            # Extract content and save as images
+            full_text, image_files = extract_pdf_content(pdf_path, output_dir)
 
             if image_files:
                 files = upload_to_gemini(image_files)
                 if files:
-                    summary = summarize_content(files, custom_prompt, response_schema)
-                    print(f"Summary for record_id {record_id}:\n{summary}")
-                    send_to_airtable(record_id, summary)
+                    json_response, extracted_text = summarize_content(files, custom_prompt, response_schema)
+
+                    # Save extracted text to a file
+                    text_file_path = output_dir / 'extracted_text.txt'
+                    with open(text_file_path, 'w', encoding='utf-8') as f:
+                        f.write(extracted_text)
+
+                    print(f"Extracted JSON response: {json_response}")
+                    send_to_airtable(record_id, json_response)
                 else:
                     print("No files uploaded to Gemini.")
             else:
                 print("Extraction failed. Please check the PDF file.")
+
         except Exception as e:
             print(f"An error occurred during processing: {e}")
 
     thread = Thread(target=process)
     thread.start()
 
+@app.route('/')
+def index():
+    return render_template('index.html')
+
 @app.route('/process_pdf', methods=['POST'])
 def process_pdf_route():
-    data = request.get_json()
-    pdf_url = data.get('pdf_url')
-    record_id = data.get('record_id')
-    custom_prompt = data.get('custom_prompt')
-    response_schema = data.get('response_schema')
-
-    print(f"Received response_schema (raw): {response_schema}")  # Debug print
+    pdf_url = request.form.get('pdf_url')
+    record_id = request.form.get('record_id')
+    custom_prompt = request.form.get('custom_prompt')
+    response_schema = request.form.get('response_schema')
 
     if pdf_url and record_id and response_schema:
         try:
-            if isinstance(response_schema, str):
-                response_schema = json.loads(response_schema)  # Convert JSON string to dictionary
-            print(f"Parsed response_schema: {response_schema}")
+            response_schema = json.loads(response_schema)
             process_pdf_async(pdf_url, record_id, custom_prompt, response_schema)
-            return jsonify({"status": "processing started"}), 200
-        except json.JSONDecodeError as e:
-            print(f"JSON decoding error: {e}")  # Debug print for JSON decoding errors
-            return jsonify({"error": "Invalid JSON format in response_schema"}), 400
+            return "Processing started", 200
+        except json.JSONDecodeError:
+            return "Invalid JSON format in response_schema", 400
     else:
-        return jsonify({"error": "Missing pdf_url, record_id, or response_schema"}), 400
+        return "Missing pdf_url, record_id, or response_schema", 400
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=10000)
+    app.run(host='0.0.0.0', port=8080)
