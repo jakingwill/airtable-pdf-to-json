@@ -124,6 +124,7 @@ def process_pdf_async(pdf_url, record_id, custom_prompt, response_schema):
             error_message = f"An error occurred during processing: {str(e)}"
             print(error_message)
             send_to_airtable(record_id, {"error": error_message})
+            raise  # Re-raise the exception for logging
 
     thread = Thread(target=process)
     thread.start()
