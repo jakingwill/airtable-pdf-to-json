@@ -6,13 +6,12 @@ authors = ["Your Name <you@example.com>"]
 
 [tool.poetry.dependencies]
 python = ">=3.10.0,<3.12"
-Flask = "^2.0.2"  # Match the version used in your script
+Flask = "^2.0.2"
 google-generativeai = "^0.7.1"
-PyMuPDF = "^1.22.5"  # This is the correct package for fitz
+PyMuPDF = "^1.22.5"
 requests = "^2.32.3"
 tqdm = "^4.66.4"
-gunicorn = "^20.1.0"  # Add this for deployment
-fitz = "^0.0.1.dev2"
+gunicorn = "^20.1.0"
 
 [tool.poetry.scripts]
 start = "gunicorn main:app"
