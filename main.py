@@ -66,7 +66,13 @@ def upload_to_gemini(image_files):
     return files
 
 def summarize_content(extracted_text, custom_prompt, response_schema):
-    full_prompt = f"{custom_prompt}\n\nHere's the extracted text from the PDF:\n\n{extracted_text}\n\nPlease extract the information according to the following schema:"
+    # Convert the response schema to a string representation if it's a dictionary
+    if isinstance(response_schema, dict):
+        response_schema_str = json.dumps(response_schema, indent=2)
+    else:
+        response_schema_str = response_schema
+
+    full_prompt = f"{custom_prompt}\n\nHere's the extracted text from the PDF:\n\n{extracted_text}\n\nPlease extract the information according to the following schema:\n\n{response_schema_str}"
 
     generation_config = genai.GenerationConfig(
         response_mime_type='application/json',
