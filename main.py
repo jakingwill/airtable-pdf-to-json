@@ -118,7 +118,7 @@ def process_pdf_async(pdf_url, record_id, custom_prompt, response_schema):
                     files = upload_to_gemini(image_files)
                     if files:
                         model = genai.GenerativeModel(model_name='models/gemini-1.5-flash')
-                        text_extraction_prompt = "Extract and transcribe all visible text from these images, preserving formatting and structure as much as possible."
+                        text_extraction_prompt = "Extract and transcribe all visible text from these images paying careful attention to include handwriting as well as printed text, preserving formatting and structure as much as possible."
                         text_extraction_response = model.generate_content([text_extraction_prompt] + files)
                         full_text = text_extraction_response.text
 
