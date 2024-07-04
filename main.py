@@ -43,6 +43,7 @@ def extract_pdf_content(pdf_path, output_dir):
     except Exception as e:
         print(f"Error opening PDF: {e}")
 
+    print(f"Full extracted text: {full_text[:500]}")  # Print first 500 characters of the full text for debugging
     return full_text, image_files
 
 def download_pdf(pdf_url, download_folder):
@@ -113,6 +114,8 @@ def process_pdf_async(pdf_url, record_id, custom_prompt, response_schema):
 
                 # Extract content and save as images
                 full_text, image_files = extract_pdf_content(pdf_path, output_dir)
+
+                print(f"Extracted text from PDF: {full_text}")  # Log the full extracted text
 
                 if not full_text and image_files:
                     files = upload_to_gemini(image_files)
