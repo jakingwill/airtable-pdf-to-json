@@ -17,8 +17,7 @@ gemini_api_key = os.getenv('GEMINI_API_KEY')
 genai.configure(api_key=gemini_api_key)
 airtable_webhook_url = os.getenv('AIRTABLE_WEBHOOK', 'https://your-airtable-webhook-url')
 
-def extract_pdf_content(pdf_path, output_dir):
-    full_text = ""
+def extract_images_from_pdf(pdf_path, output_dir):
     image_files = []
     try:
         print(f"Opening PDF: {pdf_path}")
@@ -27,24 +26,18 @@ def extract_pdf_content(pdf_path, output_dir):
             for page_num, page in enumerate(doc):
                 try:
                     print(f"Processing page {page_num + 1}")
-                    page_text = page.get_text().strip()
-                    if page_text:
-                        print(f"Extracted text from page {page_num + 1}: {page_text[:100]}")  # Print first 100 characters
-                        full_text += page_text + "\n\n"
-                    else:
-                        # If no text extracted, save as image
-                        pix = page.get_pixmap()
-                        image_filename = output_dir / f"image-{page_num + 1}.jpg"
-                        pix.save(image_filename)
-                        image_files.append(str(image_filename))
-                        print(f"Saved image for page {page_num + 1}: {image_filename}")
+                    # Save each page as an image
+                    pix = page.get_pixmap()
+                    image_filename = output_dir / f"image-{page_num + 1}.jpg"
+                    pix.save(image_filename)
+                    image_files.append(str(image_filename))
+                    print(f"Saved image for page {page_num + 1}: {image_filename}")
                 except Exception as e:
                     print(f"Error processing page {page_num + 1}: {e}")
     except Exception as e:
         print(f"Error opening PDF: {e}")
 
-    print(f"Full extracted text: {full_text[:500]}")  # Print first 500 characters of the full text for debugging
-    return full_text, image_files
+    return image_files
 
 def download_pdf(pdf_url, download_folder):
     download_folder = pathlib.Path(download_folder)
@@ -65,7 +58,7 @@ def upload_to_gemini(file_path):
 
 def extract_text_from_images(image_files):
     model = genai.GenerativeModel(model_name='models/gemini-1.5-flash')
-    text_extraction_prompt = "Extract and transcribe all visible text from these images, preserving formatting and structure as much as possible."
+    text_extraction_prompt = "Extract and transcribe all visible text from these images, including handwriting, preserving formatting and structure as much as possible."
 
     extracted_text = ""
     for img in tqdm.tqdm(image_files):
@@ -118,14 +111,11 @@ def process_pdf_async(pdf_url, record_id, custom_prompt, response_schema):
                 output_dir = request_dir / 'output'
                 output_dir.mkdir(exist_ok=True)
 
-                # Extract content and save as images
-                full_text, image_files = extract_pdf_content(pdf_path, output_dir)
+                # Extract images from PDF
+                image_files = extract_images_from_pdf(pdf_path, output_dir)
 
-                if not full_text and image_files:
-                    print("No text extracted, using Gemini to extract text from images.")
-                    full_text = extract_text_from_images(image_files)
-
-                print(f"Extracted text from PDF: {full_text}")  # Log the full extracted text
+                # Extract text from images using Gemini
+                full_text = extract_text_from_images(image_files)
 
                 if full_text.strip():
                     text_file_path = request_dir / 'extracted_text.txt'
@@ -138,7 +128,7 @@ def process_pdf_async(pdf_url, record_id, custom_prompt, response_schema):
                     print(f"JSON response to be sent to Airtable: {json_response}")
                     send_to_airtable(record_id, json_response)
                 else:
-                    error_message = "Extraction failed. No text could be extracted from the PDF."
+                    error_message = "Extraction failed. No text could be extracted from the PDF images."
                     print(error_message)
                     send_to_airtable(record_id, {"error": error_message})
 
