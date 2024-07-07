@@ -15,7 +15,7 @@ app = Flask(__name__)
 # Initialize Gemini API client with your API key
 gemini_api_key = os.getenv('GEMINI_API_KEY')
 genai.configure(api_key=gemini_api_key)
-airtable_webhook_url = os.getenv('AIRTABLE_WEBHOOK')
+airtable_webhook_url = os.getenv('AIRTABLE_WEBHOOK', 'https://your-airtable-webhook-url')
 
 def extract_pdf_content(pdf_path, output_dir):
     full_text = ""
@@ -58,30 +58,36 @@ def download_pdf(pdf_url, download_folder):
     else:
         raise Exception(f"Failed to download PDF, status code: {response.status_code}")
 
-def upload_to_gemini(image_files):
-    files = []
+def upload_to_gemini(file_path):
+    file = genai.upload_file(path=str(file_path), display_name=f"Extracted Text")
+    print(f"Uploaded {file_path}")
+    return file
+
+def extract_text_from_images(image_files):
+    model = genai.GenerativeModel(model_name='models/gemini-1.5-flash')
+    text_extraction_prompt = "Extract and transcribe all visible text from these images, preserving formatting and structure as much as possible."
+
+    extracted_text = ""
     for img in tqdm.tqdm(image_files):
         file = genai.upload_file(path=str(img), display_name=f"Page {pathlib.Path(img).stem}")
-        files.append(file)
-        print(f"Uploaded {img}")
-    return files
+        prompt = [text_extraction_prompt] + [file] + ["[END]\n\nPlease extract the text from these images."]
+        response = model.generate_content(prompt)
+        extracted_text += response.candidates[0].content.parts[0].text + "\n\n"
+    
+    print(f"Extracted text from images: {extracted_text[:500]}")  # Print first 500 characters of the extracted text for debugging
+    return extracted_text
 
-def summarize_content(extracted_text, custom_prompt, response_schema):
+def summarize_content(extracted_text_file, custom_prompt, response_schema):
     # Convert the response schema to a string representation if it's a dictionary
     if isinstance(response_schema, dict):
         response_schema_str = json.dumps(response_schema, indent=2)
     else:
         response_schema_str = response_schema
 
-    full_prompt = f"{custom_prompt}\n\nHere's the extracted text from the PDF:\n\n{extracted_text}\n\nPlease extract the information according to the following schema:\n\n{response_schema_str}"
-
-    generation_config = genai.GenerationConfig(
-        response_mime_type='application/json',
-        response_schema=response_schema
-    )
-
+    full_prompt = f"{custom_prompt}\n\nPlease extract the information according to the following schema:\n\n{response_schema_str}"
     model = genai.GenerativeModel(model_name='models/gemini-1.5-flash')
-    response = model.generate_content(full_prompt, generation_config=generation_config)
+    prompt = [full_prompt] + [extracted_text_file] + ["[END]\n\nPlease extract the text according to the schema."]
+    response = model.generate_content(prompt)
     json_response = response.candidates[0].content.parts[0].text
     print(f"Extracted JSON response from Gemini: {json_response}")
     return json_response
@@ -115,22 +121,24 @@ def process_pdf_async(pdf_url, record_id, custom_prompt, response_schema):
                 # Extract content and save as images
                 full_text, image_files = extract_pdf_content(pdf_path, output_dir)
 
+                if not full_text and image_files:
+                    print("No text extracted, using Gemini to extract text from images.")
+                    full_text = extract_text_from_images(image_files)
+
                 print(f"Extracted text from PDF: {full_text}")  # Log the full extracted text
 
-                if not full_text and image_files:
-                    files = upload_to_gemini(image_files)
-                    if files:
-                        model = genai.GenerativeModel(model_name='models/gemini-1.5-flash')
-                        text_extraction_prompt = "Extract and transcribe all visible text from these images paying careful attention to include handwriting as well as printed text, preserving formatting and structure as much as possible."
-                        text_extraction_response = model.generate_content([text_extraction_prompt] + files)
-                        full_text = text_extraction_response.text
+                if full_text.strip():
+                    text_file_path = request_dir / 'extracted_text.txt'
+                    with text_file_path.open('w') as text_file:
+                        text_file.write(full_text)
 
-                if full_text:
-                    json_response = summarize_content(full_text, custom_prompt, response_schema)
+                    uploaded_file = upload_to_gemini(text_file_path)
+
+                    json_response = summarize_content(uploaded_file, custom_prompt, response_schema)
                     print(f"JSON response to be sent to Airtable: {json_response}")
                     send_to_airtable(record_id, json_response)
                 else:
-                    error_message = "Extraction failed. Please check the PDF file."
+                    error_message = "Extraction failed. No text could be extracted from the PDF."
                     print(error_message)
                     send_to_airtable(record_id, {"error": error_message})
 
