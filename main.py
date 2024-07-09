@@ -9,6 +9,7 @@ import pathlib
 import tqdm
 import json
 import tempfile
+from google.generativeai.types import HarmCategory, HarmBlockThreshold  # Import required enums
 
 app = Flask(__name__)
 
@@ -64,9 +65,21 @@ def extract_text_from_images(image_files):
     for img in tqdm.tqdm(image_files):
         file = genai.upload_file(path=str(img), display_name=f"Page {pathlib.Path(img).stem}")
         prompt = [text_extraction_prompt] + [file] + ["[END]\n\nPlease extract the text from these images."]
-        response = model.generate_content(prompt)
-        extracted_text += response.candidates[0].content.parts[0].text + "\n\n"
-    
+
+        # Configure safety settings to block none
+        safety_settings = {
+            HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
+            HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
+            HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
+            HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
+        }
+
+        response = model.generate_content(prompt, safety_settings=safety_settings)
+        if response.prompt_feedback.block_reason == 0 and response.candidates and response.candidates[0].content.parts:
+            extracted_text += response.candidates[0].content.parts[0].text + "\n\n"
+        else:
+            print(f"Content blocked or no content extracted from image: {img}")
+
     print(f"Extracted text from images: {extracted_text[:500]}")  # Print first 500 characters of the extracted text for debugging
     return extracted_text
 
@@ -78,17 +91,35 @@ def summarize_content(extracted_text_file, custom_prompt, response_schema):
         response_schema_str = response_schema
 
     full_prompt = f"{custom_prompt}\n\nPlease extract the information according to the following schema:\n\n{response_schema_str}"
+    print(f"Full prompt for summarization: {full_prompt}")  # Log the full prompt
+
     model = genai.GenerativeModel(model_name='models/gemini-1.5-flash')
     prompt = [full_prompt] + [extracted_text_file] + ["[END]\n\nPlease extract the text according to the schema."]
-    response = model.generate_content(prompt)
-    json_response = response.candidates[0].content.parts[0].text
-    print(f"Extracted JSON response from Gemini: {json_response}")
-    return json_response
+
+    # Configure safety settings to block none
+    safety_settings = {
+        HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
+        HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
+        HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
+        HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
+    }
+
+    response = model.generate_content(prompt, safety_settings=safety_settings)
+    print(f"Response from Gemini: {response}")  # Log the raw response
+    if response.prompt_feedback.block_reason == 0 and response.candidates and response.candidates[0].content.parts:
+        json_response = response.candidates[0].content.parts[0].text
+        print(f"Extracted JSON response from Gemini: {json_response}")
+        return json_response
+    else:
+        print("Content blocked or no content extracted from text file.")
+        return {"error": "Content blocked or no content extracted from text file."}
 
 def send_to_airtable(record_id, summary):
     try:
         webhook_url = airtable_webhook_url
         print(f"Webhook URL: {webhook_url}")  # Log the webhook URL
+        if not webhook_url.startswith("http"):
+            webhook_url = f"https://{webhook_url}"  # Ensure the URL has a scheme
         data = {
             "record_id": record_id,
             "summary": summary
