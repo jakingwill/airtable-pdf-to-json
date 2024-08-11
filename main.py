@@ -57,9 +57,8 @@ def upload_to_gemini(file_path):
     print(f"Uploaded {file_path}")
     return file
 
-def extract_text_from_images(image_files):
+def extract_text_from_images(image_files, text_extraction_prompt):
     model = genai.GenerativeModel(model_name='models/gemini-1.5-flash')
-    text_extraction_prompt = "Extract and transcribe all visible text from these images, including handwriting, preserving formatting and structure as much as possible."
 
     extracted_text = ""
     for img in tqdm.tqdm(image_files):
@@ -132,7 +131,7 @@ def send_to_airtable(record_id, summary):
     except Exception as e:
         print(f"Error sending data to Airtable: {e}")
 
-def process_pdf_async(pdf_url, record_id, custom_prompt, response_schema):
+def process_pdf_async(pdf_url, record_id, custom_prompt, text_extraction_prompt, response_schema):
     def process():
         try:
             with tempfile.TemporaryDirectory() as temp_dir:
@@ -146,7 +145,7 @@ def process_pdf_async(pdf_url, record_id, custom_prompt, response_schema):
                 image_files = extract_images_from_pdf(pdf_path, output_dir)
 
                 # Extract text from images using Gemini
-                full_text = extract_text_from_images(image_files)
+                full_text = extract_text_from_images(image_files, text_extraction_prompt)
 
                 if full_text.strip():
                     text_file_path = request_dir / 'extracted_text.txt'
@@ -178,20 +177,21 @@ def process_pdf_route():
     pdf_url = data.get('pdf_url')
     record_id = data.get('record_id')
     custom_prompt = data.get('custom_prompt')
+    text_extraction_prompt = data.get('text_extraction_prompt')
     response_schema = data.get('response_schema')
 
     # Convert response_schema from string to dictionary if needed
     if isinstance(response_schema, str):
         response_schema = json.loads(response_schema)
 
-    if pdf_url and record_id and response_schema:
+    if pdf_url and record_id and response_schema and text_extraction_prompt:
         try:
-            process_pdf_async(pdf_url, record_id, custom_prompt, response_schema)
+            process_pdf_async(pdf_url, record_id, custom_prompt, text_extraction_prompt, response_schema)
             return jsonify({"status": "processing started"}), 200
         except json.JSONDecodeError:
             return jsonify({"error": "Invalid JSON format in response_schema"}), 400
     else:
-        return jsonify({"error": "Missing pdf_url, record_id, or response_schema"}), 400
+        return jsonify({"error": "Missing pdf_url, record_id, text_extraction_prompt, or response_schema"}), 400
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 8080))
