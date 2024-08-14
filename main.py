@@ -192,7 +192,3 @@ def process_pdf_route():
             return jsonify({"error": "Invalid JSON format in response_schema"}), 400
     else:
         return jsonify({"error": "Missing pdf_url, record_id, text_extraction_prompt, or response_schema"}), 400
-
-if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 8080))
-    app.run(host='0.0.0.0', port=port)
