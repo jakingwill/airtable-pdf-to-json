@@ -1,8 +1,9 @@
+from concurrent.futures import ThreadPoolExecutor
+import atexit
 import os
 import google.generativeai as genai
 import requests
 from flask import Flask, request, jsonify
-from threading import Thread
 import uuid
 import fitz  # PyMuPDF
 import pathlib
@@ -17,6 +18,9 @@ app = Flask(__name__)
 gemini_api_key = os.getenv('GEMINI_API_KEY')
 genai.configure(api_key=gemini_api_key)
 airtable_webhook_url = os.getenv('AIRTABLE_WEBHOOK', 'http://your-airtable-webhook-url')
+
+# Create a thread pool executor with a fixed number of threads
+executor = ThreadPoolExecutor(max_workers=10)
 
 def extract_images_from_pdf(pdf_path, output_dir):
     image_files = []
@@ -176,11 +180,11 @@ def process_pdf_async(pdf_url, record_id, custom_prompt, text_extraction_prompt,
         except Exception as e:
             error_message = f"An error occurred during processing: {str(e)}"
             print(error_message)
-            send_to_airtable(record_id, {"error": error_message})
+            send_to_airtable(record_id, {"error": error_message}, "An error occurred")
             raise  # Re-raise the exception for logging
 
-    thread = Thread(target=process)
-    thread.start()
+    # Submit the task to the thread pool
+    executor.submit(process)
 
 @app.route('/process_pdf', methods=['POST'])
 def process_pdf_route():
@@ -203,3 +207,6 @@ def process_pdf_route():
             return jsonify({"error": "Invalid JSON format in response_schema"}), 400
     else:
         return jsonify({"error": "Missing pdf_url, record_id, text_extraction_prompt, or response_schema"}), 400
+
+# Ensure the thread pool executor shuts down cleanly
+atexit.register(executor.shutdown)
