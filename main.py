@@ -16,7 +16,7 @@ app = Flask(__name__)
 # Initialize Gemini API client with your API key
 gemini_api_key = os.getenv('GEMINI_API_KEY')
 genai.configure(api_key=gemini_api_key)
-airtable_webhook_url = os.getenv('AIRTABLE_WEBHOOK', 'https://your-airtable-webhook-url')
+airtable_webhook_url = os.getenv('AIRTABLE_WEBHOOK', 'http://your-airtable-webhook-url')
 
 def extract_images_from_pdf(pdf_path, output_dir):
     image_files = []
@@ -113,15 +113,20 @@ def summarize_content(extracted_text_file, custom_prompt, response_schema):
         print("Content blocked or no content extracted from text file.")
         return {"error": "Content blocked or no content extracted from text file."}
 
-def send_to_airtable(record_id, summary):
+def send_to_airtable(record_id, summary, extracted_text):
     try:
         webhook_url = airtable_webhook_url
         print(f"Webhook URL: {webhook_url}")  # Log the webhook URL
-        if not webhook_url.startswith("http"):
-            webhook_url = f"https://{webhook_url}"  # Ensure the URL has a scheme
+        if not webhook_url.startswith("https://"):
+            if webhook_url.startswith("http://"):
+                webhook_url = webhook_url.replace("http://", "https://")
+            else:
+                webhook_url = f"https://{webhook_url}"  # Ensure the URL has a scheme
+
         data = {
             "record_id": record_id,
-            "summary": summary
+            "summary": summary,
+            "extracted_text": extracted_text  # Add extracted text to the payload
         }
         response = requests.post(webhook_url, json=data)
         if response.status_code == 200:
@@ -156,11 +161,17 @@ def process_pdf_async(pdf_url, record_id, custom_prompt, text_extraction_prompt,
 
                     json_response = summarize_content(uploaded_file, custom_prompt, response_schema)
                     print(f"JSON response to be sent to Airtable: {json_response}")
-                    send_to_airtable(record_id, json_response)
+
+                    # Read the extracted text file
+                    with open(text_file_path, 'r') as f:
+                        extracted_text = f.read()
+
+                    # Send the data to Airtable
+                    send_to_airtable(record_id, json_response, extracted_text)
                 else:
                     error_message = "Extraction failed. No text could be extracted from the PDF images."
                     print(error_message)
-                    send_to_airtable(record_id, {"error": error_message})
+                    send_to_airtable(record_id, {"error": error_message}, "No text extracted")
 
         except Exception as e:
             error_message = f"An error occurred during processing: {str(e)}"
