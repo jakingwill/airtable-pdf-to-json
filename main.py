@@ -117,7 +117,7 @@ def summarize_content(extracted_text_file, custom_prompt, response_schema):
         print("Content blocked or no content extracted from text file.")
         return {"error": "Content blocked or no content extracted from text file."}
 
-def send_to_airtable(record_id, summary, extracted_text):
+def send_to_airtable(record_id, summary, extracted_text, target_field_id):
     try:
         webhook_url = airtable_webhook_url
         print(f"Webhook URL: {webhook_url}")  # Log the webhook URL
@@ -130,7 +130,8 @@ def send_to_airtable(record_id, summary, extracted_text):
         data = {
             "record_id": record_id,
             "summary": summary,
-            "extracted_text": extracted_text  # Add extracted text to the payload
+            "extracted_text": extracted_text,  # Add extracted text to the payload
+            "target_field_id": target_field_id  # Add targetFieldId to the payload
         }
         response = requests.post(webhook_url, json=data)
         if response.status_code == 200:
@@ -140,7 +141,7 @@ def send_to_airtable(record_id, summary, extracted_text):
     except Exception as e:
         print(f"Error sending data to Airtable: {e}")
 
-def process_pdf_async(pdf_url, record_id, custom_prompt, text_extraction_prompt, response_schema):
+def process_pdf_async(pdf_url, record_id, custom_prompt, text_extraction_prompt, response_schema, target_field_id):
     def process():
         try:
             with tempfile.TemporaryDirectory() as temp_dir:
@@ -171,16 +172,16 @@ def process_pdf_async(pdf_url, record_id, custom_prompt, text_extraction_prompt,
                         extracted_text = f.read()
 
                     # Send the data to Airtable
-                    send_to_airtable(record_id, json_response, extracted_text)
+                    send_to_airtable(record_id, json_response, extracted_text, target_field_id)
                 else:
                     error_message = "Extraction failed. No text could be extracted from the PDF images."
                     print(error_message)
-                    send_to_airtable(record_id, {"error": error_message}, "No text extracted")
+                    send_to_airtable(record_id, {"error": error_message}, "No text extracted", target_field_id)
 
         except Exception as e:
             error_message = f"An error occurred during processing: {str(e)}"
             print(error_message)
-            send_to_airtable(record_id, {"error": error_message}, "An error occurred")
+            send_to_airtable(record_id, {"error": error_message}, "An error occurred", target_field_id)
             raise  # Re-raise the exception for logging
 
     # Submit the task to the thread pool
@@ -194,19 +195,20 @@ def process_pdf_route():
     custom_prompt = data.get('custom_prompt')
     text_extraction_prompt = data.get('text_extraction_prompt')
     response_schema = data.get('response_schema')
+    target_field_id = data.get('targetFieldId')  # Extract targetFieldId
 
     # Convert response_schema from string to dictionary if needed
     if isinstance(response_schema, str):
         response_schema = json.loads(response_schema)
 
-    if pdf_url and record_id and response_schema and text_extraction_prompt:
+    if pdf_url and record_id and response_schema and text_extraction_prompt and target_field_id:
         try:
-            process_pdf_async(pdf_url, record_id, custom_prompt, text_extraction_prompt, response_schema)
+            process_pdf_async(pdf_url, record_id, custom_prompt, text_extraction_prompt, response_schema, target_field_id)
             return jsonify({"status": "processing started"}), 200
         except json.JSONDecodeError:
             return jsonify({"error": "Invalid JSON format in response_schema"}), 400
     else:
-        return jsonify({"error": "Missing pdf_url, record_id, text_extraction_prompt, or response_schema"}), 400
+        return jsonify({"error": "Missing pdf_url, record_id, text_extraction_prompt, targetFieldId, or response_schema"}), 400
 
 # Ensure the thread pool executor shuts down cleanly
 atexit.register(executor.shutdown)
