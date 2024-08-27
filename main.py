@@ -11,6 +11,8 @@ import tqdm
 import json
 import tempfile
 from google.generativeai.types import HarmCategory, HarmBlockThreshold  # Import required enums
+import time
+import backoff
 
 app = Flask(__name__)
 
@@ -22,7 +24,29 @@ airtable_webhook_url = os.getenv('AIRTABLE_WEBHOOK', 'http://your-airtable-webho
 # Create a thread pool executor with a fixed number of threads
 executor = ThreadPoolExecutor(max_workers=10)
 
+@backoff.on_exception(backoff.expo, Exception, max_tries=5)
+def download_pdf(pdf_url, download_folder):
+    """
+    Download a PDF file from the given URL.
+    Uses exponential backoff to retry the download on failure.
+    """
+    download_folder = pathlib.Path(download_folder)
+    response = requests.get(pdf_url)
+    if response.status_code == 200:
+        file_path = download_folder / 'downloaded_pdf.pdf'
+        with file_path.open('wb') as file:
+            file.write(response.content)
+        print(f"Downloaded PDF to: {file_path}")
+        return str(file_path)
+    else:
+        raise Exception(f"Failed to download PDF, status code: {response.status_code}")
+
+@backoff.on_exception(backoff.expo, Exception, max_tries=5)
 def extract_images_from_pdf(pdf_path, output_dir):
+    """
+    Extract images from a PDF file.
+    Uses exponential backoff to retry the extraction on failure.
+    """
     image_files = []
     try:
         print(f"Opening PDF: {pdf_path}")
@@ -31,7 +55,6 @@ def extract_images_from_pdf(pdf_path, output_dir):
             for page_num, page in enumerate(doc):
                 try:
                     print(f"Processing page {page_num + 1}")
-                    # Save each page as an image
                     pix = page.get_pixmap()
                     image_filename = output_dir / f"image-{page_num + 1}.jpg"
                     pix.save(image_filename)
@@ -44,24 +67,12 @@ def extract_images_from_pdf(pdf_path, output_dir):
 
     return image_files
 
-def download_pdf(pdf_url, download_folder):
-    download_folder = pathlib.Path(download_folder)
-    response = requests.get(pdf_url)
-    if response.status_code == 200:
-        file_path = download_folder / 'downloaded_pdf.pdf'
-        with file_path.open('wb') as file:
-            file.write(response.content)
-        print(f"Downloaded PDF to: {file_path}")
-        return str(file_path)
-    else:
-        raise Exception(f"Failed to download PDF, status code: {response.status_code}")
-
-def upload_to_gemini(file_path):
-    file = genai.upload_file(path=str(file_path), display_name=f"Extracted Text")
-    print(f"Uploaded {file_path}")
-    return file
-
+@backoff.on_exception(backoff.expo, Exception, max_tries=5)
 def extract_text_from_images(image_files, text_extraction_prompt):
+    """
+    Extract text from a list of images using the Gemini API.
+    Uses exponential backoff to retry the text extraction on failure.
+    """
     model = genai.GenerativeModel(model_name='models/gemini-1.5-flash')
 
     extracted_text = ""
@@ -83,10 +94,15 @@ def extract_text_from_images(image_files, text_extraction_prompt):
         else:
             print(f"Content blocked or no content extracted from image: {img}")
 
-    print(f"Extracted text from images: {extracted_text[:500]}")  # Print first 500 characters of the extracted text for debugging
+    print(f"Extracted text from images: {extracted_text[:500]}")
     return extracted_text
 
+@backoff.on_exception(backoff.expo, Exception, max_tries=5)
 def summarize_content(extracted_text_file, custom_prompt, response_schema):
+    """
+    Summarize the content of a text file using the Gemini API.
+    Uses exponential backoff to retry the summarization on failure.
+    """
     # Convert the response schema to a string representation if it's a dictionary
     if isinstance(response_schema, dict):
         response_schema_str = json.dumps(response_schema, indent=2)
@@ -94,7 +110,7 @@ def summarize_content(extracted_text_file, custom_prompt, response_schema):
         response_schema_str = response_schema
 
     full_prompt = f"{custom_prompt}\n\nPlease extract the information according to the following schema:\n\n{response_schema_str}"
-    print(f"Full prompt for summarization: {full_prompt}")  # Log the full prompt
+    print(f"Full prompt for summarization: {full_prompt}")
 
     model = genai.GenerativeModel(model_name='models/gemini-1.5-flash')
     prompt = [full_prompt] + [extracted_text_file] + ["[END]\n\nPlease extract the text according to the schema."]
@@ -108,7 +124,7 @@ def summarize_content(extracted_text_file, custom_prompt, response_schema):
     }
 
     response = model.generate_content(prompt, safety_settings=safety_settings)
-    print(f"Response from Gemini: {response}")  # Log the raw response
+    print(f"Response from Gemini: {response}")
     if response.prompt_feedback.block_reason == 0 and response.candidates and response.candidates[0].content.parts:
         json_response = response.candidates[0].content.parts[0].text
         print(f"Extracted JSON response from Gemini: {json_response}")
@@ -117,21 +133,26 @@ def summarize_content(extracted_text_file, custom_prompt, response_schema):
         print("Content blocked or no content extracted from text file.")
         return {"error": "Content blocked or no content extracted from text file."}
 
+@backoff.on_exception(backoff.expo, Exception, max_tries=5)
 def send_to_airtable(record_id, summary, extracted_text, target_field_id):
+    """
+    Send the processed data to the Airtable webhook.
+    Uses exponential backoff to retry the sending on failure.
+    """
     try:
         webhook_url = airtable_webhook_url
-        print(f"Webhook URL: {webhook_url}")  # Log the webhook URL
+        print(f"Webhook URL: {webhook_url}")
         if not webhook_url.startswith("https://"):
             if webhook_url.startswith("http://"):
                 webhook_url = webhook_url.replace("http://", "https://")
             else:
-                webhook_url = f"https://{webhook_url}"  # Ensure the URL has a scheme
+                webhook_url = f"https://{webhook_url}"
 
         data = {
             "record_id": record_id,
             "summary": summary,
-            "extracted_text": extracted_text,  # Add extracted text to the payload
-            "target_field_id": target_field_id  # Add targetFieldId to the payload
+            "extracted_text": extracted_text,
+            "target_field_id": target_field_id
         }
         response = requests.post(webhook_url, json=data)
         if response.status_code == 200:
@@ -212,3 +233,9 @@ def process_pdf_route():
 
 # Ensure the thread pool executor shuts down cleanly
 atexit.register(executor.shutdown)
+
+
+
+if __name__ == '__main__':
+    port = int(os.environ.get('PORT', 8080))
+    app.run(host='0.0.0.0', port=port)
