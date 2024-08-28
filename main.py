@@ -64,8 +64,21 @@ def extract_images_from_pdf(pdf_path, output_dir):
                     print(f"Error processing page {page_num + 1}: {e}")
     except Exception as e:
         print(f"Error opening PDF: {e}")
-
     return image_files
+
+@backoff.on_exception(backoff.expo, Exception, max_tries=5)
+def upload_to_gemini(file_path):
+    """
+    Upload a file to Gemini.
+    Uses exponential backoff to retry the upload on failure.
+    """
+    try:
+        file = genai.upload_file(path=str(file_path), display_name=f"Extracted Text")
+        print(f"Successfully uploaded {file_path} to Gemini")
+        return file
+    except Exception as e:
+        print(f"Error in upload_to_gemini: {str(e)}")
+        raise
 
 @backoff.on_exception(backoff.expo, Exception, max_tries=5)
 def extract_text_from_images(image_files, text_extraction_prompt):
@@ -103,7 +116,6 @@ def summarize_content(extracted_text_file, custom_prompt, response_schema):
     Summarize the content of a text file using the Gemini API.
     Uses exponential backoff to retry the summarization on failure.
     """
-    # Convert the response schema to a string representation if it's a dictionary
     if isinstance(response_schema, dict):
         response_schema_str = json.dumps(response_schema, indent=2)
     else:
@@ -115,7 +127,6 @@ def summarize_content(extracted_text_file, custom_prompt, response_schema):
     model = genai.GenerativeModel(model_name='models/gemini-1.5-flash')
     prompt = [full_prompt] + [extracted_text_file] + ["[END]\n\nPlease extract the text according to the schema."]
 
-    # Configure safety settings to block none
     safety_settings = {
         HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
         HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
@@ -233,9 +244,3 @@ def process_pdf_route():
 
 # Ensure the thread pool executor shuts down cleanly
 atexit.register(executor.shutdown)
-
-
-
-if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 8080))
-    app.run(host='0.0.0.0', port=port)
