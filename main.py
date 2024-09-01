@@ -38,7 +38,7 @@ def download_pdf(pdf_url, download_folder):
     """
     try:
         download_folder = pathlib.Path(download_folder)
-        response = requests.get(pdf_url)
+        response = requests.get(pdf_url, timeout=60)  # 60 seconds timeout
         response.raise_for_status()  # Raises an HTTPError for bad responses
         file_path = download_folder / 'downloaded_pdf.pdf'
         with file_path.open('wb') as file:
