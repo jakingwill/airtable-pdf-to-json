@@ -1,4 +1,4 @@
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 import atexit
 import os
 import google.generativeai as genai
@@ -27,7 +27,10 @@ gemini_api_key = os.getenv('GEMINI_API_KEY')
 genai.configure(api_key=gemini_api_key)
 airtable_webhook_url = os.getenv('AIRTABLE_WEBHOOK', 'http://your-airtable-webhook-url')
 
-# Create a thread pool executor with a fixed number of threads
+# Create a process pool executor for image extraction
+image_extraction_executor = ProcessPoolExecutor(max_workers=2)
+
+# Create a thread pool executor for other tasks
 executor = ThreadPoolExecutor(max_workers=4)
 
 @backoff.on_exception(backoff.expo, Exception, max_tries=5)
@@ -49,7 +52,6 @@ def download_pdf(pdf_url, download_folder):
         logger.error(f"Error downloading PDF from {pdf_url}: {str(e)}")
         raise
 
-@backoff.on_exception(backoff.expo, Exception, max_tries=5)
 def extract_images_from_pdf(pdf_path, output_dir):
     """
     Extract images from a PDF file.
@@ -197,8 +199,9 @@ def process_pdf_async(pdf_url, record_id, custom_prompt, text_extraction_prompt,
                 output_dir = request_dir / 'output'
                 output_dir.mkdir(exist_ok=True)
 
-                # Extract images from PDF
-                image_files = extract_images_from_pdf(pdf_path, output_dir)
+                # Extract images from PDF using ProcessPoolExecutor
+                future = image_extraction_executor.submit(extract_images_from_pdf, pdf_path, output_dir)
+                image_files = future.result()
 
                 # Extract text from images using Gemini
                 full_text = extract_text_from_images(image_files, text_extraction_prompt)
@@ -266,7 +269,7 @@ def process_pdf_route():
         logger.error(traceback.format_exc())
         return jsonify({"error": error_message}), 500
 
-# Ensure the thread pool executor shuts down cleanly
+# Ensure the process pool executor shuts down cleanly
 atexit.register(executor.shutdown)
 
 if __name__ == "__main__":
