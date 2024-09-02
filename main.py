@@ -94,6 +94,7 @@ def send_to_airtable(record_id, summary, target_field_id):
         data = {
             "record_id": record_id,
             "summary": summary,
+            "extracted_text": extracted_text,
             "target_field_id": target_field_id
         }
         response = requests.post(airtable_webhook_url, json=data)
