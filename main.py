@@ -1,4 +1,4 @@
-from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor
 import atexit
 import os
 import google.generativeai as genai
@@ -78,15 +78,15 @@ def process_pdf_with_gemini(file_ref, custom_prompt, response_schema):
         if response.candidates and response.candidates[0].content.parts:
             json_response = response.candidates[0].content.parts[0].text
             logger.info(f"Extracted JSON response from Gemini: {json_response}")
-            return json_response
+            return json_response, json_response  # Assuming extracted_text is the same as json_response
         else:
             logger.warning("Content blocked or no content extracted from text file.")
-            return {"error": "Content blocked or no content extracted from text file."}
+            return {"error": "Content blocked or no content extracted from text file."}, ""
     except Exception as e:
         logger.error(f"Error in process_pdf_with_gemini: {str(e)}")
         raise
 
-def send_to_airtable(record_id, summary, target_field_id):
+def send_to_airtable(record_id, summary, extracted_text, target_field_id):
     """
     Send the processed data to the Airtable webhook.
     """
@@ -116,17 +116,17 @@ def process_pdf_async(pdf_url, record_id, custom_prompt, response_schema, target
                 # Upload the PDF to Gemini API
                 file_ref = upload_pdf_to_gemini(pdf_path)
 
-                # Process the PDF with Gemini and generate a summary
-                json_response = process_pdf_with_gemini(file_ref, custom_prompt, response_schema)
+                # Process the PDF with Gemini and generate a summary and extracted text
+                json_response, extracted_text = process_pdf_with_gemini(file_ref, custom_prompt, response_schema)
 
-                # Send the summary to Airtable
-                send_to_airtable(record_id, json_response, target_field_id)
+                # Send the summary and extracted text to Airtable
+                send_to_airtable(record_id, json_response, extracted_text, target_field_id)
 
         except Exception as e:
             error_message = f"An error occurred during processing: {str(e)}"
             logger.error(error_message)
             logger.error(traceback.format_exc())
-            send_to_airtable(record_id, {"error": error_message}, target_field_id)
+            send_to_airtable(record_id, {"error": error_message}, "", target_field_id)
 
     # Submit the task to the thread pool
     executor.submit(process)
