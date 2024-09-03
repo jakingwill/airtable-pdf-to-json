@@ -57,55 +57,49 @@ def upload_pdf_to_gemini(pdf_path):
         logger.error(f"Error uploading PDF to Gemini: {str(e)}")
         raise
 
-def process_pdf_with_gemini(file_ref, custom_prompt, response_schema):
+def extract_text_with_gemini(file_ref, text_extraction_prompt):
     """
-    Process the uploaded PDF using the Gemini API.
+    Extract text from the PDF using the Gemini API.
     """
     try:
         model = genai.GenerativeModel(model_name='gemini-1.5-flash')
 
-        if isinstance(response_schema, dict):
-            response_schema_str = json.dumps(response_schema, indent=2)
-        else:
-            response_schema_str = response_schema
+        response = model.generate_content([file_ref, text_extraction_prompt])
+        logger.info(f"Response from Gemini: {response}")
 
-        full_prompt = f"{custom_prompt}\n\nPlease extract the information according to the following schema:\n\n{response_schema_str}"
+        if response.candidates and response.candidates[0].content.parts:
+            extracted_text = response.candidates[0].content.parts[0].text
+            logger.info(f"Extracted text from PDF: {extracted_text}")
+            return extracted_text
+        else:
+            logger.warning("No text extracted from the PDF.")
+            return ""
+    except Exception as e:
+        logger.error(f"Error in extract_text_with_gemini: {str(e)}")
+        raise
+
+def summarize_content_with_gemini(file_ref, custom_prompt, response_schema):
+    """
+    Summarize the content of the PDF using the Gemini API.
+    """
+    try:
+        model = genai.GenerativeModel(model_name='gemini-1.5-flash')
+
+        full_prompt = f"{custom_prompt}\n\nPlease extract the information according to the following schema:\n\n{response_schema}"
         logger.info(f"Full prompt for summarization: {full_prompt}")
 
         response = model.generate_content([file_ref, full_prompt])
         logger.info(f"Response from Gemini: {response}")
 
         if response.candidates and response.candidates[0].content.parts:
-            json_response = response.candidates[0].content.parts[0].text
-            logger.info(f"Extracted JSON response from Gemini: {json_response}")
-            return json_response, json_response  # Assuming extracted_text is the same as json_response
+            summary = response.candidates[0].content.parts[0].text
+            logger.info(f"Extracted summary from PDF: {summary}")
+            return summary
         else:
-            logger.warning("Content blocked or no content extracted from text file.")
-            return {"error": "Content blocked or no content extracted from text file."}, ""
-    except Exception as e:
-        logger.error(f"Error in process_pdf_with_gemini: {str(e)}")
-        raise
-
-def extract_text_from_pdf(pdf_path, text_extraction_prompt):
-    """
-    Extract text from a PDF using the Gemini API.
-    """
-    try:
-        model = genai.GenerativeModel(model_name='gemini-1.5-flash')
-        file_ref = genai.upload_file(path=str(pdf_path), display_name="Extracted Text")
-
-        prompt = [text_extraction_prompt, file_ref, "[END]\n\nPlease extract the text from this PDF."]
-        response = model.generate_content(prompt)
-
-        if response.candidates and response.candidates[0].content.parts:
-            extracted_text = response.candidates[0].content.parts[0].text
-            logger.info(f"Extracted text from PDF: {extracted_text[:500]}")
-            return extracted_text
-        else:
-            logger.warning("No content extracted from PDF.")
+            logger.warning("No summary extracted from the PDF.")
             return ""
     except Exception as e:
-        logger.error(f"Error extracting text from PDF: {str(e)}")
+        logger.error(f"Error in summarize_content_with_gemini: {str(e)}")
         raise
 
 def send_to_airtable(record_id, summary, extracted_text, target_field_id):
@@ -113,14 +107,10 @@ def send_to_airtable(record_id, summary, extracted_text, target_field_id):
     Send the processed data to the Airtable webhook.
     """
     try:
-        # Ensure extracted_text is treated as plain text and not as a JSON object
-        if isinstance(extracted_text, dict) or isinstance(extracted_text, list):
-            extracted_text = json.dumps(extracted_text)  # Convert to string if mistakenly treated as JSON
-
         data = {
             "record_id": record_id,
-            "summary": summary,
-            "extracted_text": str(extracted_text),  # Convert to plain text string
+            "summary": summary,  # JSON-formatted summary
+            "extracted_text": extracted_text,  # Plain text extracted from the PDF
             "target_field_id": target_field_id
         }
         response = requests.post(airtable_webhook_url, json=data)
@@ -142,14 +132,14 @@ def process_pdf_async(pdf_url, record_id, custom_prompt, response_schema, text_e
                 # Upload the PDF to Gemini API
                 file_ref = upload_pdf_to_gemini(pdf_path)
 
-                # Extract the text from the PDF
-                extracted_text = extract_text_from_pdf(pdf_path, text_extraction_prompt)
+                # Extract text with the text_extraction_prompt
+                extracted_text = extract_text_with_gemini(file_ref, text_extraction_prompt)
 
-                # Process the PDF with Gemini and generate a summary
-                json_response, extracted_text = process_pdf_with_gemini(file_ref, custom_prompt, response_schema)
+                # Generate summary with the custom_prompt and response_schema
+                summary = summarize_content_with_gemini(file_ref, custom_prompt, response_schema)
 
                 # Send the summary and extracted text to Airtable
-                send_to_airtable(record_id, json_response, extracted_text, target_field_id)
+                send_to_airtable(record_id, summary, extracted_text, target_field_id)
 
         except Exception as e:
             error_message = f"An error occurred during processing: {str(e)}"
@@ -175,11 +165,11 @@ def process_pdf_route():
         if isinstance(response_schema, str):
             response_schema = json.loads(response_schema)
 
-        if pdf_url and record_id and response_schema and target_field_id:
+        if pdf_url and record_id and response_schema and text_extraction_prompt and target_field_id:
             process_pdf_async(pdf_url, record_id, custom_prompt, response_schema, text_extraction_prompt, target_field_id)
             return jsonify({"status": "processing started"}), 200
         else:
-            missing_fields = [field for field in ['pdf_url', 'record_id', 'response_schema', 'targetFieldId'] if not locals().get(field)]
+            missing_fields = [field for field in ['pdf_url', 'record_id', 'response_schema', 'text_extraction_prompt', 'targetFieldId'] if not locals().get(field)]
             error_message = f"Missing required fields: {', '.join(missing_fields)}"
             logger.error(error_message)
             return jsonify({"error": error_message}), 400
