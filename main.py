@@ -113,10 +113,14 @@ def send_to_airtable(record_id, summary, extracted_text, target_field_id):
     Send the processed data to the Airtable webhook.
     """
     try:
+        # Ensure extracted_text is treated as plain text and not as a JSON object
+        if isinstance(extracted_text, dict) or isinstance(extracted_text, list):
+            extracted_text = json.dumps(extracted_text)  # Convert to string if mistakenly treated as JSON
+
         data = {
             "record_id": record_id,
             "summary": summary,
-            "extracted_text": extracted_text,
+            "extracted_text": str(extracted_text),  # Convert to plain text string
             "target_field_id": target_field_id
         }
         response = requests.post(airtable_webhook_url, json=data)
