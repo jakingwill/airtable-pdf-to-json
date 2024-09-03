@@ -86,6 +86,28 @@ def process_pdf_with_gemini(file_ref, custom_prompt, response_schema):
         logger.error(f"Error in process_pdf_with_gemini: {str(e)}")
         raise
 
+def extract_text_from_pdf(pdf_path, text_extraction_prompt):
+    """
+    Extract text from a PDF using the Gemini API.
+    """
+    try:
+        model = genai.GenerativeModel(model_name='gemini-1.5-flash')
+        file_ref = genai.upload_file(path=str(pdf_path), display_name="Extracted Text")
+
+        prompt = [text_extraction_prompt, file_ref, "[END]\n\nPlease extract the text from this PDF."]
+        response = model.generate_content(prompt)
+
+        if response.candidates and response.candidates[0].content.parts:
+            extracted_text = response.candidates[0].content.parts[0].text
+            logger.info(f"Extracted text from PDF: {extracted_text[:500]}")
+            return extracted_text
+        else:
+            logger.warning("No content extracted from PDF.")
+            return ""
+    except Exception as e:
+        logger.error(f"Error extracting text from PDF: {str(e)}")
+        raise
+
 def send_to_airtable(record_id, summary, extracted_text, target_field_id):
     """
     Send the processed data to the Airtable webhook.
@@ -104,7 +126,7 @@ def send_to_airtable(record_id, summary, extracted_text, target_field_id):
         logger.error(f"Error sending data to Airtable: {str(e)}")
         raise
 
-def process_pdf_async(pdf_url, record_id, custom_prompt, response_schema, target_field_id):
+def process_pdf_async(pdf_url, record_id, custom_prompt, response_schema, text_extraction_prompt, target_field_id):
     def process():
         try:
             with tempfile.TemporaryDirectory() as temp_dir:
@@ -116,7 +138,10 @@ def process_pdf_async(pdf_url, record_id, custom_prompt, response_schema, target
                 # Upload the PDF to Gemini API
                 file_ref = upload_pdf_to_gemini(pdf_path)
 
-                # Process the PDF with Gemini and generate a summary and extracted text
+                # Extract the text from the PDF
+                extracted_text = extract_text_from_pdf(pdf_path, text_extraction_prompt)
+
+                # Process the PDF with Gemini and generate a summary
                 json_response, extracted_text = process_pdf_with_gemini(file_ref, custom_prompt, response_schema)
 
                 # Send the summary and extracted text to Airtable
@@ -139,6 +164,7 @@ def process_pdf_route():
         record_id = data.get('record_id')
         custom_prompt = data.get('custom_prompt')
         response_schema = data.get('response_schema')
+        text_extraction_prompt = data.get('text_extraction_prompt')
         target_field_id = data.get('targetFieldId')  # Extract targetFieldId
 
         # Convert response_schema from string to dictionary if needed
@@ -146,7 +172,7 @@ def process_pdf_route():
             response_schema = json.loads(response_schema)
 
         if pdf_url and record_id and response_schema and target_field_id:
-            process_pdf_async(pdf_url, record_id, custom_prompt, response_schema, target_field_id)
+            process_pdf_async(pdf_url, record_id, custom_prompt, response_schema, text_extraction_prompt, target_field_id)
             return jsonify({"status": "processing started"}), 200
         else:
             missing_fields = [field for field in ['pdf_url', 'record_id', 'response_schema', 'targetFieldId'] if not locals().get(field)]
