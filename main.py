@@ -1,18 +1,12 @@
-from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor
 import atexit
 import os
 import google.generativeai as genai
 import requests
 from flask import Flask, request, jsonify
-import uuid
-import fitz  # PyMuPDF
 import pathlib
-import tqdm
 import json
 import tempfile
-from google.generativeai.types import HarmCategory, HarmBlockThreshold
-import time
-import backoff
 import logging
 import traceback
 
@@ -27,211 +21,131 @@ gemini_api_key = os.getenv('GEMINI_API_KEY')
 genai.configure(api_key=gemini_api_key)
 airtable_webhook_url = os.getenv('AIRTABLE_WEBHOOK', 'http://your-airtable-webhook-url')
 
-# Create a process pool executor for image extraction
-image_extraction_executor = ProcessPoolExecutor(max_workers=2)
-
-# Create a thread pool executor for other tasks
+# Create a thread pool executor for tasks
 executor = ThreadPoolExecutor(max_workers=4)
 
-@backoff.on_exception(backoff.expo, Exception, max_tries=5)
 def download_pdf(pdf_url, download_folder):
     """
-    Download a PDF file from the given URL.
-    Uses exponential backoff to retry the download on failure.
+    Download a PDF file from the given URL and save it to the specified download folder.
     """
     try:
         download_folder = pathlib.Path(download_folder)
-        response = requests.get(pdf_url, timeout=60)  # 60 seconds timeout
-        response.raise_for_status()  # Raises an HTTPError for bad responses
+        download_folder.mkdir(parents=True, exist_ok=True)  # Ensure the directory exists
         file_path = download_folder / 'downloaded_pdf.pdf'
-        with file_path.open('wb') as file:
+
+        response = requests.get(pdf_url, timeout=60)  # Set a timeout for the request
+        response.raise_for_status()  # Raise an error if the request failed
+
+        with open(file_path, 'wb') as file:
             file.write(response.content)
+
         logger.info(f"Downloaded PDF to: {file_path}")
         return str(file_path)
     except requests.RequestException as e:
         logger.error(f"Error downloading PDF from {pdf_url}: {str(e)}")
         raise
 
-def extract_images_from_pdf(pdf_path, output_dir):
+def upload_pdf_to_gemini(pdf_path):
     """
-    Extract images from a PDF file.
-    Uses exponential backoff to retry the extraction on failure.
-    """
-    image_files = []
-    try:
-        logger.info(f"Opening PDF: {pdf_path}")
-        with fitz.open(pdf_path) as doc:
-            logger.info(f"Number of pages in PDF: {len(doc)}")
-            for page_num, page in enumerate(doc):
-                try:
-                    logger.info(f"Processing page {page_num + 1}")
-                    pix = page.get_pixmap()
-                    image_filename = output_dir / f"image-{page_num + 1}.jpg"
-                    pix.save(image_filename)
-                    image_files.append(str(image_filename))
-                    logger.info(f"Saved image for page {page_num + 1}: {image_filename}")
-                except Exception as e:
-                    logger.error(f"Error processing page {page_num + 1}: {str(e)}")
-    except Exception as e:
-        logger.error(f"Error opening PDF: {str(e)}")
-        raise
-    return image_files
-
-@backoff.on_exception(backoff.expo, Exception, max_tries=5)
-def upload_to_gemini(file_path):
-    """
-    Upload a file to Gemini.
-    Uses exponential backoff to retry the upload on failure.
+    Upload a PDF file to the Gemini API.
     """
     try:
-        file = genai.upload_file(path=str(file_path), display_name=f"Extracted Text")
-        logger.info(f"Successfully uploaded {file_path} to Gemini")
-        return file
+        file_ref = genai.upload_file(str(pdf_path))
+        logger.info(f"Successfully uploaded {pdf_path} to Gemini")
+        return file_ref
     except Exception as e:
-        logger.error(f"Error in upload_to_gemini: {str(e)}")
+        logger.error(f"Error uploading PDF to Gemini: {str(e)}")
         raise
 
-@backoff.on_exception(backoff.expo, Exception, max_tries=5)
-def extract_text_from_images(image_files, text_extraction_prompt):
+def extract_text_with_gemini(file_ref, text_extraction_prompt):
     """
-    Extract text from a list of images using the Gemini API.
-    Uses exponential backoff to retry the text extraction on failure.
-    """
-    model = genai.GenerativeModel(model_name='models/gemini-1.5-flash')
-
-    extracted_text = ""
-    for img in tqdm.tqdm(image_files):
-        try:
-            file = genai.upload_file(path=str(img), display_name=f"Page {pathlib.Path(img).stem}")
-            prompt = [text_extraction_prompt] + [file] + ["[END]\n\nPlease extract the text from these images."]
-
-            safety_settings = {
-                HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
-                HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
-                HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
-                HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
-            }
-
-            response = model.generate_content(prompt, safety_settings=safety_settings)
-            if response.prompt_feedback.block_reason == 0 and response.candidates and response.candidates[0].content.parts:
-                extracted_text += response.candidates[0].content.parts[0].text + "\n\n"
-            else:
-                logger.warning(f"Content blocked or no content extracted from image: {img}")
-        except Exception as e:
-            logger.error(f"Error extracting text from image {img}: {str(e)}")
-
-    logger.info(f"Extracted text from images: {extracted_text[:500]}")
-    return extracted_text
-
-@backoff.on_exception(backoff.expo, Exception, max_tries=5)
-def summarize_content(extracted_text_file, custom_prompt, response_schema):
-    """
-    Summarize the content of a text file using the Gemini API.
-    Uses exponential backoff to retry the summarization on failure.
+    Extract text from the PDF using the Gemini API.
     """
     try:
-        if isinstance(response_schema, dict):
-            response_schema_str = json.dumps(response_schema, indent=2)
+        model = genai.GenerativeModel(model_name='gemini-1.5-flash')
+
+        response = model.generate_content([file_ref, text_extraction_prompt])
+        logger.info(f"Response from Gemini: {response}")
+
+        if response.candidates and response.candidates[0].content.parts:
+            extracted_text = response.candidates[0].content.parts[0].text
+            logger.info(f"Extracted text from PDF: {extracted_text}")
+            return extracted_text
         else:
-            response_schema_str = response_schema
+            logger.warning("No text extracted from the PDF.")
+            return ""
+    except Exception as e:
+        logger.error(f"Error in extract_text_with_gemini: {str(e)}")
+        raise
 
-        full_prompt = f"{custom_prompt}\n\nPlease extract the information according to the following schema:\n\n{response_schema_str}"
+def summarize_content_with_gemini(file_ref, custom_prompt, response_schema):
+    """
+    Summarize the content of the PDF using the Gemini API.
+    """
+    try:
+        model = genai.GenerativeModel(model_name='gemini-1.5-flash')
+
+        full_prompt = f"{custom_prompt}\n\nPlease extract the information according to the following schema:\n\n{response_schema}"
         logger.info(f"Full prompt for summarization: {full_prompt}")
 
-        model = genai.GenerativeModel(model_name='models/gemini-1.5-flash')
-        prompt = [full_prompt] + [extracted_text_file] + ["[END]\n\nPlease extract the text according to the schema."]
-
-        safety_settings = {
-            HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
-            HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
-            HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
-            HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
-        }
-
-        response = model.generate_content(prompt, safety_settings=safety_settings)
+        response = model.generate_content([file_ref, full_prompt])
         logger.info(f"Response from Gemini: {response}")
-        if response.prompt_feedback.block_reason == 0 and response.candidates and response.candidates[0].content.parts:
-            json_response = response.candidates[0].content.parts[0].text
-            logger.info(f"Extracted JSON response from Gemini: {json_response}")
-            return json_response
+
+        if response.candidates and response.candidates[0].content.parts:
+            summary = response.candidates[0].content.parts[0].text
+            logger.info(f"Extracted summary from PDF: {summary}")
+            return summary
         else:
-            logger.warning("Content blocked or no content extracted from text file.")
-            return {"error": "Content blocked or no content extracted from text file."}
+            logger.warning("No summary extracted from the PDF.")
+            return ""
     except Exception as e:
-        logger.error(f"Error in summarize_content: {str(e)}")
+        logger.error(f"Error in summarize_content_with_gemini: {str(e)}")
         raise
 
-@backoff.on_exception(backoff.expo, Exception, max_tries=5)
 def send_to_airtable(record_id, summary, extracted_text, target_field_id):
     """
     Send the processed data to the Airtable webhook.
-    Uses exponential backoff to retry the sending on failure.
     """
     try:
-        webhook_url = airtable_webhook_url
-        logger.info(f"Webhook URL: {webhook_url}")
-        if not webhook_url.startswith("https://"):
-            if webhook_url.startswith("http://"):
-                webhook_url = webhook_url.replace("http://", "https://")
-            else:
-                webhook_url = f"https://{webhook_url}"
-
         data = {
             "record_id": record_id,
-            "summary": summary,
-            "extracted_text": extracted_text,
+            "summary": summary,  # JSON-formatted summary
+            "extracted_text": extracted_text,  # Plain text extracted from the PDF
             "target_field_id": target_field_id
         }
-        response = requests.post(webhook_url, json=data)
+        response = requests.post(airtable_webhook_url, json=data)
         response.raise_for_status()
         logger.info("Successfully sent data to Airtable")
     except requests.RequestException as e:
         logger.error(f"Error sending data to Airtable: {str(e)}")
         raise
 
-def process_pdf_async(pdf_url, record_id, custom_prompt, text_extraction_prompt, response_schema, target_field_id):
+def process_pdf_async(pdf_url, record_id, custom_prompt, response_schema, text_extraction_prompt, target_field_id):
     def process():
         try:
             with tempfile.TemporaryDirectory() as temp_dir:
                 request_dir = pathlib.Path(temp_dir)
 
+                # Download the PDF
                 pdf_path = download_pdf(pdf_url, request_dir)
-                output_dir = request_dir / 'output'
-                output_dir.mkdir(exist_ok=True)
 
-                # Extract images from PDF using ProcessPoolExecutor
-                future = image_extraction_executor.submit(extract_images_from_pdf, pdf_path, output_dir)
-                image_files = future.result()
+                # Upload the PDF to Gemini API
+                file_ref = upload_pdf_to_gemini(pdf_path)
 
-                # Extract text from images using Gemini
-                full_text = extract_text_from_images(image_files, text_extraction_prompt)
+                # Extract text with the text_extraction_prompt
+                extracted_text = extract_text_with_gemini(file_ref, text_extraction_prompt)
 
-                if full_text.strip():
-                    text_file_path = request_dir / 'extracted_text.txt'
-                    with text_file_path.open('w') as text_file:
-                        text_file.write(full_text)
+                # Generate summary with the custom_prompt and response_schema
+                summary = summarize_content_with_gemini(file_ref, custom_prompt, response_schema)
 
-                    uploaded_file = upload_to_gemini(text_file_path)
-
-                    json_response = summarize_content(uploaded_file, custom_prompt, response_schema)
-                    logger.info(f"JSON response to be sent to Airtable: {json_response}")
-
-                    # Read the extracted text file
-                    with open(text_file_path, 'r') as f:
-                        extracted_text = f.read()
-
-                    # Send the data to Airtable
-                    send_to_airtable(record_id, json_response, extracted_text, target_field_id)
-                else:
-                    error_message = "Extraction failed. No text could be extracted from the PDF images."
-                    logger.error(error_message)
-                    send_to_airtable(record_id, {"error": error_message}, "No text extracted", target_field_id)
+                # Send the summary and extracted text to Airtable
+                send_to_airtable(record_id, summary, extracted_text, target_field_id)
 
         except Exception as e:
             error_message = f"An error occurred during processing: {str(e)}"
             logger.error(error_message)
             logger.error(traceback.format_exc())
-            send_to_airtable(record_id, {"error": error_message}, "An error occurred", target_field_id)
+            send_to_airtable(record_id, {"error": error_message}, "", target_field_id)
 
     # Submit the task to the thread pool
     executor.submit(process)
@@ -243,8 +157,8 @@ def process_pdf_route():
         pdf_url = data.get('pdf_url')
         record_id = data.get('record_id')
         custom_prompt = data.get('custom_prompt')
-        text_extraction_prompt = data.get('text_extraction_prompt')
         response_schema = data.get('response_schema')
+        text_extraction_prompt = data.get('text_extraction_prompt')
         target_field_id = data.get('targetFieldId')  # Extract targetFieldId
 
         # Convert response_schema from string to dictionary if needed
@@ -252,7 +166,7 @@ def process_pdf_route():
             response_schema = json.loads(response_schema)
 
         if pdf_url and record_id and response_schema and text_extraction_prompt and target_field_id:
-            process_pdf_async(pdf_url, record_id, custom_prompt, text_extraction_prompt, response_schema, target_field_id)
+            process_pdf_async(pdf_url, record_id, custom_prompt, response_schema, text_extraction_prompt, target_field_id)
             return jsonify({"status": "processing started"}), 200
         else:
             missing_fields = [field for field in ['pdf_url', 'record_id', 'response_schema', 'text_extraction_prompt', 'targetFieldId'] if not locals().get(field)]
@@ -269,8 +183,9 @@ def process_pdf_route():
         logger.error(traceback.format_exc())
         return jsonify({"error": error_message}), 500
 
-# Ensure the process pool executor shuts down cleanly
+# Ensure the thread pool executor shuts down cleanly
 atexit.register(executor.shutdown)
 
-if __name__ == "__main__":
+
+if __name__ == '__main__':
     app.run(debug=True)
