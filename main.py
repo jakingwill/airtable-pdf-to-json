@@ -22,7 +22,7 @@ genai.configure(api_key=gemini_api_key)
 airtable_webhook_url = os.getenv('AIRTABLE_WEBHOOK', 'http://your-airtable-webhook-url')
 
 # Create a thread pool executor for tasks
-executor = ThreadPoolExecutor(max_workers=4)
+executor = ThreadPoolExecutor(max_workers=1)
 
 def download_pdf(pdf_url, download_folder):
     """
