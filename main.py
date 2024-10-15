@@ -50,7 +50,7 @@ def upload_pdf_to_gemini(pdf_path):
     Upload a PDF file to the Gemini API.
     """
     try:
-        file_ref = genai.upload_file(str(pdf_path))
+        file_ref = genai.upload_file(pdf_path)
         logger.info(f"Successfully uploaded {pdf_path} to Gemini")
         return file_ref
     except Exception as e:
@@ -64,7 +64,11 @@ def extract_text_with_gemini(file_ref, text_extraction_prompt):
     try:
         model = genai.GenerativeModel(model_name='gemini-1.5-flash')
 
-        response = model.generate_content([file_ref, text_extraction_prompt])
+        prompt = [file_ref, text_extraction_prompt]
+
+        response = model.generate_content(
+            prompt=prompt
+        )
         logger.info(f"Response from Gemini: {response}")
 
         if response.candidates and response.candidates[0].content.parts:
@@ -91,9 +95,12 @@ def summarize_content_with_gemini(file_ref, custom_prompt, response_schema):
             response_schema=response_schema
         )
 
+        # Construct the prompt correctly
+        prompt = [file_ref, custom_prompt]
+
         # Generate content with the model
         response = model.generate_content(
-            [file_ref, custom_prompt],
+            prompt=prompt,
             generation_config=generation_config
         )
         logger.info(f"Response from Gemini: {response}")
