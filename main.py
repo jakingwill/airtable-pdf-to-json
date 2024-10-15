@@ -86,9 +86,7 @@ def extract_text_with_gemini(file_ref, text_extraction_prompt):
         convo = model.start_chat()
 
         # Send the text extraction prompt along with the file reference
-        response = convo.send_message(
-            message=[file_ref, text_extraction_prompt]
-        )
+        response = convo.send_message([file_ref, text_extraction_prompt])
 
         # Check if response is available
         if response.text:
@@ -125,7 +123,7 @@ def summarize_content_with_gemini(file_ref, custom_prompt, response_schema):
         convo = model.start_chat(system_prompt=custom_prompt)
 
         # Send the file reference to the model
-        response = convo.send_message(message=[file_ref])
+        response = convo.send_message([file_ref])
 
         # Check if response is available
         if response.text:
