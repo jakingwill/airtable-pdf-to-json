@@ -50,7 +50,7 @@ def upload_pdf_to_gemini(pdf_path):
     Upload a PDF file to the Gemini API.
     """
     try:
-        file_ref = genai.upload_file(pdf_path)
+        file_ref = genai.upload_file(str(pdf_path))
         logger.info(f"Successfully uploaded {pdf_path} to Gemini")
         return file_ref
     except Exception as e:
@@ -64,11 +64,7 @@ def extract_text_with_gemini(file_ref, text_extraction_prompt):
     try:
         model = genai.GenerativeModel(model_name='gemini-1.5-flash')
 
-        prompt = [file_ref, text_extraction_prompt]
-
-        response = model.generate_content(
-            prompt=prompt
-        )
+        response = model.generate_content([file_ref, text_extraction_prompt])
         logger.info(f"Response from Gemini: {response}")
 
         if response.candidates and response.candidates[0].content.parts:
@@ -89,20 +85,17 @@ def summarize_content_with_gemini(file_ref, custom_prompt, response_schema):
     try:
         model = genai.GenerativeModel(model_name='gemini-1.5-flash')
 
-        # Prepare the generation config with response schema
-        generation_config = genai.GenerationConfig(
-            response_mime_type="application/json",
-            response_schema=response_schema
-        )
+        # Check if response_schema is a dictionary and convert it to a JSON string if necessary
+        if isinstance(response_schema, dict):
+            response_schema_str = json.dumps(response_schema, indent=2)
+        else:
+            response_schema_str = response_schema
 
-        # Construct the prompt correctly
-        prompt = [file_ref, custom_prompt]
+        # Prepare the full prompt with the correct response schema format
+        full_prompt = f"{custom_prompt}\n\nPlease extract the information according to the following schema:\n\n{response_schema_str}"
+        logger.info(f"Full prompt for summarization: {full_prompt}")
 
-        # Generate content with the model
-        response = model.generate_content(
-            prompt=prompt,
-            generation_config=generation_config
-        )
+        response = model.generate_content([file_ref, full_prompt])
         logger.info(f"Response from Gemini: {response}")
 
         if response.candidates and response.candidates[0].content.parts:
@@ -179,8 +172,6 @@ def process_pdf_route():
         if isinstance(response_schema, str):
             response_schema = json.loads(response_schema)
 
-        # Validate response_schema format here if necessary
-
         if pdf_url and record_id and response_schema and text_extraction_prompt and target_field_id:
             process_pdf_async(pdf_url, record_id, custom_prompt, response_schema, text_extraction_prompt, target_field_id)
             return jsonify({"status": "processing started"}), 200
@@ -201,6 +192,7 @@ def process_pdf_route():
 
 # Ensure the thread pool executor shuts down cleanly
 atexit.register(executor.shutdown)
+
 
 if __name__ == '__main__':
     app.run(debug=True)
