@@ -1,14 +1,14 @@
-from concurrent.futures import ThreadPoolExecutor
-import atexit
 import os
-import google.generativeai as genai
-import requests
-from flask import Flask, request, jsonify
-import pathlib
 import json
-import tempfile
 import logging
 import traceback
+import tempfile
+import pathlib
+import requests
+import atexit
+from concurrent.futures import ThreadPoolExecutor
+from flask import Flask, request, jsonify
+import google.generativeai as genai
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -16,10 +16,21 @@ logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 
-# Initialize Gemini API client with your API key
+# Retrieve environment variables
 gemini_api_key = os.getenv('GEMINI_API_KEY')
+airtable_webhook_url = os.getenv('AIRTABLE_WEBHOOK')
+
+# Validate environment variables
+if not gemini_api_key:
+    logger.error("GEMINI_API_KEY environment variable not set.")
+    exit(1)
+
+if not airtable_webhook_url:
+    logger.error("AIRTABLE_WEBHOOK environment variable not set.")
+    exit(1)
+
+# Configure Gemini API client
 genai.configure(api_key=gemini_api_key)
-airtable_webhook_url = os.getenv('AIRTABLE_WEBHOOK', 'http://your-airtable-webhook-url')
 
 # Create a thread pool executor for tasks
 executor = ThreadPoolExecutor(max_workers=1)
@@ -50,7 +61,7 @@ def upload_pdf_to_gemini(pdf_path):
     Upload a PDF file to the Gemini API.
     """
     try:
-        file_ref = genai.upload_file(str(pdf_path))
+        file_ref = genai.upload_file(pdf_path)
         logger.info(f"Successfully uploaded {pdf_path} to Gemini")
         return file_ref
     except Exception as e:
@@ -62,13 +73,26 @@ def extract_text_with_gemini(file_ref, text_extraction_prompt):
     Extract text from the PDF using the Gemini API.
     """
     try:
-        model = genai.GenerativeModel(model_name='gemini-1.5-flash')
+        # Initialize the model with appropriate generation configuration
+        model = genai.GenerativeModel(
+            model_name='models/gemini-1.5',
+            generation_config={
+                'temperature': 0.7,
+                'max_output_tokens': 2048
+            }
+        )
 
-        response = model.generate_content([file_ref, text_extraction_prompt])
-        logger.info(f"Response from Gemini: {response}")
+        # Start a chat with the model
+        convo = model.start_chat()
 
-        if response.candidates and response.candidates[0].content.parts:
-            extracted_text = response.candidates[0].content.parts[0].text
+        # Send the text extraction prompt along with the file reference
+        response = convo.send_message(
+            message=[file_ref, text_extraction_prompt]
+        )
+
+        # Check if response is available
+        if response.text:
+            extracted_text = response.text
             logger.info(f"Extracted text from PDF: {extracted_text}")
             return extracted_text
         else:
@@ -83,23 +107,29 @@ def summarize_content_with_gemini(file_ref, custom_prompt, response_schema):
     Summarize the content of the PDF using the Gemini API.
     """
     try:
-        model = genai.GenerativeModel(model_name='gemini-1.5-flash')
+        # Prepare the generation configuration with the response_schema
+        generation_config = {
+            'temperature': 0.7,
+            'max_output_tokens': 2048,
+            'response_mime_type': 'application/json',
+            'response_schema': response_schema  # Should be a type hint or genai.protos.Schema
+        }
 
-        # Check if response_schema is a dictionary and convert it to a JSON string if necessary
-        if isinstance(response_schema, dict):
-            response_schema_str = json.dumps(response_schema, indent=2)
-        else:
-            response_schema_str = response_schema
+        # Initialize the model with the generation configuration
+        model = genai.GenerativeModel(
+            model_name='models/gemini-1.5',
+            generation_config=generation_config
+        )
 
-        # Prepare the full prompt with the correct response schema format
-        full_prompt = f"{custom_prompt}\n\nPlease extract the information according to the following schema:\n\n{response_schema_str}"
-        logger.info(f"Full prompt for summarization: {full_prompt}")
+        # Start a chat with the model using the custom prompt as the system prompt
+        convo = model.start_chat(system_prompt=custom_prompt)
 
-        response = model.generate_content([file_ref, full_prompt])
-        logger.info(f"Response from Gemini: {response}")
+        # Send the file reference to the model
+        response = convo.send_message(message=[file_ref])
 
-        if response.candidates and response.candidates[0].content.parts:
-            summary = response.candidates[0].content.parts[0].text
+        # Check if response is available
+        if response.text:
+            summary = response.text
             logger.info(f"Extracted summary from PDF: {summary}")
             return summary
         else:
@@ -116,7 +146,7 @@ def send_to_airtable(record_id, summary, extracted_text, target_field_id):
     try:
         data = {
             "record_id": record_id,
-            "summary": summary,  # JSON-formatted summary
+            "summary": summary,          # JSON-formatted summary
             "extracted_text": extracted_text,  # Plain text extracted from the PDF
             "target_field_id": target_field_id
         }
@@ -152,7 +182,12 @@ def process_pdf_async(pdf_url, record_id, custom_prompt, response_schema, text_e
             error_message = f"An error occurred during processing: {str(e)}"
             logger.error(error_message)
             logger.error(traceback.format_exc())
-            send_to_airtable(record_id, {"error": error_message}, "", target_field_id)
+
+            # Send the error message to Airtable
+            try:
+                send_to_airtable(record_id, {"error": error_message}, "", target_field_id)
+            except Exception as airtable_exception:
+                logger.error(f"Failed to send error message to Airtable: {str(airtable_exception)}")
 
     # Submit the task to the thread pool
     executor.submit(process)
@@ -161,6 +196,8 @@ def process_pdf_async(pdf_url, record_id, custom_prompt, response_schema, text_e
 def process_pdf_route():
     try:
         data = request.json  # Assuming Airtable sends JSON data
+
+        # Extract required fields
         pdf_url = data.get('pdf_url')
         record_id = data.get('record_id')
         custom_prompt = data.get('custom_prompt')
@@ -168,22 +205,55 @@ def process_pdf_route():
         text_extraction_prompt = data.get('text_extraction_prompt')
         target_field_id = data.get('targetFieldId')  # Extract targetFieldId
 
-        # Convert response_schema from string to dictionary if needed
-        if isinstance(response_schema, str):
-            response_schema = json.loads(response_schema)
+        # Log the received data for debugging (ensure sensitive data is not logged in production)
+        logger.info(f"Received data: {json.dumps(data, indent=2)}")
 
-        if pdf_url and record_id and response_schema and text_extraction_prompt and target_field_id:
-            process_pdf_async(pdf_url, record_id, custom_prompt, response_schema, text_extraction_prompt, target_field_id)
-            return jsonify({"status": "processing started"}), 200
-        else:
-            missing_fields = [field for field in ['pdf_url', 'record_id', 'response_schema', 'text_extraction_prompt', 'targetFieldId'] if not locals().get(field)]
+        # Validate that all required fields are present
+        required_fields = {
+            'pdf_url': pdf_url,
+            'record_id': record_id,
+            'custom_prompt': custom_prompt,
+            'response_schema': response_schema,
+            'text_extraction_prompt': text_extraction_prompt,
+            'target_field_id': target_field_id
+        }
+
+        missing_fields = [field for field, value in required_fields.items() if not value]
+
+        if missing_fields:
             error_message = f"Missing required fields: {', '.join(missing_fields)}"
             logger.error(error_message)
             return jsonify({"error": error_message}), 400
-    except json.JSONDecodeError as e:
-        error_message = f"Invalid JSON format in request body or response_schema: {str(e)}"
-        logger.error(error_message)
-        return jsonify({"error": error_message}), 400
+
+        # If response_schema is a JSON string, parse it
+        if isinstance(response_schema, str):
+            try:
+                response_schema = eval(response_schema, {'__builtins__': None}, {
+                    'int': int,
+                    'float': float,
+                    'bool': bool,
+                    'str': str,
+                    'list': list,
+                    'dict': dict,
+                    # Include any custom types if necessary
+                })
+            except Exception as e:
+                error_message = f"Invalid response_schema format: {str(e)}"
+                logger.error(error_message)
+                return jsonify({"error": error_message}), 400
+
+        # Start the asynchronous PDF processing
+        process_pdf_async(
+            pdf_url,
+            record_id,
+            custom_prompt,
+            response_schema,
+            text_extraction_prompt,
+            target_field_id
+        )
+
+        return jsonify({"status": "processing started"}), 200
+
     except Exception as e:
         error_message = f"An unexpected error occurred: {str(e)}"
         logger.error(error_message)
@@ -193,6 +263,5 @@ def process_pdf_route():
 # Ensure the thread pool executor shuts down cleanly
 atexit.register(executor.shutdown)
 
-
 if __name__ == '__main__':
-    app.run(debug=True)
+    app.run(debug=False)  # Set debug=False for production
