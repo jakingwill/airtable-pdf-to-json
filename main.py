@@ -80,17 +80,29 @@ def extract_text_with_gemini(file_ref, text_extraction_prompt):
 
 def summarize_content_with_gemini(file_ref, custom_prompt, response_schema):
     """
-    Summarize the content of the PDF and determine the assessment type using the Gemini API.
+    Summarize the content of the PDF and determine the assessment type and assessment name using the Gemini API.
     """
     try:
         model = genai.GenerativeModel(model_name='gemini-1.5-flash')
 
-        # Include prompt to determine assessment type (Essay or Exam style)
+        # Include prompt to determine assessment type and assessment name
         assessment_type_prompt = (
-            f"Your job is to analyse the extracted text and decide which of the following options this assessment meets, in terms of assessment type. Essay: You should select this option if you think the assessment is an essay style assessment that probably contains only one question. Exam style: You should select this option if you think the assessment is an exam style assessment. The definition of this is that it contains multiple questions that the student has to answer, and likely has question numbering e.g. 1.1, 1.2 etc The output that you give me should simply be the the assessment type that you think is most likely. Therefore your output should simply either be: Essay OR Exam style. Since I will be using this output to populate a dropdown field, it is extremely important that you give only one of these options in your output, and do not provide any pre-text or post text."
+            "Your job is to analyse the extracted text and decide which of the following options this assessment meets, in terms of assessment type. "
+            "Essay: You should select this option if you think the assessment is an essay-style assessment that probably contains only one question. "
+            "Exam style: You should select this option if you think the assessment is an exam-style assessment. "
+            "The definition of this is that it contains multiple questions that the student has to answer, and likely has question numbering (e.g., 1.1, 1.2, etc.). "
+            "The output that you give me should simply be the assessment type that you think is most likely. "
+            "Therefore your output should simply either be: 'Essay' OR 'Exam style'."
         )
 
-        full_prompt = f"{custom_prompt}\n\nPlease extract the information according to the following schema:\n\n{json.dumps(response_schema, indent=2)}\n\n{assessment_type_prompt}"
+        assessment_name_prompt = (
+            "Please give this assessment an appropriate name. The title of the assessment might be in the text already, "
+            "but if not, provide an intuitive name for the assessment using the content provided. "
+            "If you can identify the subject and the grade in the text provided, please include that in the name. "
+            "In your output, please only provide the name of the assessment - no pre-text or post-text should exist in your output."
+        )
+
+        full_prompt = f"{custom_prompt}\n\nPlease extract the information according to the following schema:\n\n{json.dumps(response_schema, indent=2)}\n\n{assessment_type_prompt}\n\n{assessment_name_prompt}"
         logger.info(f"Full prompt for summarization: {full_prompt}")
 
         # Generate content using the custom prompt and generation config
@@ -107,20 +119,24 @@ def summarize_content_with_gemini(file_ref, custom_prompt, response_schema):
             elif "Exam style" in summary:
                 assessment_type = "Exam style"
             else:
-                assessment_type = "Unknown"  # Fallback in case Gemini doesn't return either
+                assessment_type = "Exam style"  # Fallback in case Gemini doesn't return either
+
+            # Extract assessment name from the summary (Assume it follows the assessment type)
+            assessment_name = summary.splitlines()[-1].strip() if summary else "Unknown"
 
             logger.info(f"Determined assessment type: {assessment_type}")
-            return summary, assessment_type
+            logger.info(f"Determined assessment name: {assessment_name}")
+            return summary, assessment_type, assessment_name
         else:
             logger.warning("No summary extracted from the PDF.")
-            return "", "Unknown"
+            return "", "Unknown", "Unknown"
     except Exception as e:
         logger.error(f"Error in summarize_content_with_gemini: {str(e)}")
         raise
 
-def send_to_airtable(record_id, summary, extracted_text, target_field_id, assessment_type=None):
+def send_to_airtable(record_id, summary, extracted_text, target_field_id, assessment_type=None, assessment_name=None):
     """
-    Send the processed data and assessment type to the Airtable webhook.
+    Send the processed data, assessment type, and assessment name to the Airtable webhook.
     """
     try:
         data = {
@@ -131,6 +147,8 @@ def send_to_airtable(record_id, summary, extracted_text, target_field_id, assess
         }
         if assessment_type:
             data["assessmentType"] = assessment_type  # Include the assessment type if provided
+        if assessment_name:
+            data["assessmentName"] = assessment_name  # Include the assessment name if provided
 
         response = requests.post(airtable_webhook_url, json=data)
         response.raise_for_status()
@@ -154,41 +172,11 @@ def process_pdf_async_assessment(pdf_url, record_id, custom_prompt, response_sch
                 # Extract text with the text_extraction_prompt
                 extracted_text = extract_text_with_gemini(file_ref, text_extraction_prompt)
 
-                # Generate summary with the custom_prompt and response_schema, and determine the assessment type
-                summary, assessment_type = summarize_content_with_gemini(file_ref, custom_prompt, response_schema)
+                # Generate summary with the custom_prompt and response_schema, and determine the assessment type and name
+                summary, assessment_type, assessment_name = summarize_content_with_gemini(file_ref, custom_prompt, response_schema)
 
-                # Send the summary, extracted text, and assessment type to Airtable
-                send_to_airtable(record_id, summary, extracted_text, target_field_id, assessment_type)
-
-        except Exception as e:
-            error_message = f"An error occurred during processing: {str(e)}"
-            logger.error(error_message)
-            logger.error(traceback.format_exc())
-            send_to_airtable(record_id, {"error": error_message}, "", target_field_id)
-
-    # Submit the task to the thread pool
-    executor.submit(process)
-
-def process_pdf_async_submission(pdf_url, record_id, custom_prompt, response_schema, text_extraction_prompt, target_field_id):
-    def process():
-        try:
-            with tempfile.TemporaryDirectory() as temp_dir:
-                request_dir = pathlib.Path(temp_dir)
-
-                # Download the PDF
-                pdf_path = download_pdf(pdf_url, request_dir)
-
-                # Upload the PDF to Gemini API
-                file_ref = upload_pdf_to_gemini(pdf_path)
-
-                # Extract text with the text_extraction_prompt
-                extracted_text = extract_text_with_gemini(file_ref, text_extraction_prompt)
-
-                # Generate summary with the custom_prompt and response_schema
-                summary, _ = summarize_content_with_gemini(file_ref, custom_prompt, response_schema)
-
-                # Send the summary and extracted text to Airtable
-                send_to_airtable(record_id, summary, extracted_text, target_field_id)
+                # Send the summary, extracted text, assessment type, and assessment name to Airtable
+                send_to_airtable(record_id, summary, extracted_text, target_field_id, assessment_type, assessment_name)
 
         except Exception as e:
             error_message = f"An error occurred during processing: {str(e)}"
@@ -216,39 +204,6 @@ def process_pdf_assessment_route():
 
         if pdf_url and record_id and response_schema and text_extraction_prompt and target_field_id:
             process_pdf_async_assessment(pdf_url, record_id, custom_prompt, response_schema, text_extraction_prompt, target_field_id)
-            return jsonify({"status": "processing started"}), 200
-        else:
-            missing_fields = [field for field in ['pdf_url', 'record_id', 'response_schema', 'text_extraction_prompt', 'targetFieldId'] if not locals().get(field)]
-            error_message = f"Missing required fields: {', '.join(missing_fields)}"
-            logger.error(error_message)
-            return jsonify({"error": error_message}), 400
-    except json.JSONDecodeError as e:
-        error_message = f"Invalid JSON format in request body or response_schema: {str(e)}"
-        logger.error(error_message)
-        return jsonify({"error": error_message}), 400
-    except Exception as e:
-        error_message = f"An unexpected error occurred: {str(e)}"
-        logger.error(error_message)
-        logger.error(traceback.format_exc())
-        return jsonify({"error": error_message}), 500
-
-@app.route('/process_pdf/submission', methods=['POST'])
-def process_pdf_submission_route():
-    try:
-        data = request.json  # Assuming Airtable sends JSON data
-        pdf_url = data.get('pdf_url')
-        record_id = data.get('record_id')
-        custom_prompt = data.get('custom_prompt')
-        response_schema = data.get('response_schema')
-        text_extraction_prompt = data.get('text_extraction_prompt')
-        target_field_id = data.get('targetFieldId')  # Extract targetFieldId
-
-        # Convert response_schema from string to dictionary if needed
-        if isinstance(response_schema, str):
-            response_schema = json.loads(response_schema)
-
-        if pdf_url and record_id and response_schema and text_extraction_prompt and target_field_id:
-            process_pdf_async_submission(pdf_url, record_id, custom_prompt, response_schema, text_extraction_prompt, target_field_id)
             return jsonify({"status": "processing started"}), 200
         else:
             missing_fields = [field for field in ['pdf_url', 'record_id', 'response_schema', 'text_extraction_prompt', 'targetFieldId'] if not locals().get(field)]
