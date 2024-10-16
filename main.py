@@ -203,7 +203,7 @@ def process_pdf_async_submission(pdf_url, record_id, custom_prompt, response_sch
                 extracted_text = extract_text_with_gemini(file_ref, text_extraction_prompt)
 
                 # Generate summary with the custom_prompt and response_schema
-                summary, _ = summarize_content_with_gemini(file_ref, custom_prompt, response_schema)
+                summary, _, _ = summarize_content_with_gemini(file_ref, custom_prompt, response_schema)
 
                 # Send the summary and extracted text to Airtable
                 send_to_airtable(record_id, summary, extracted_text, target_field_id)
