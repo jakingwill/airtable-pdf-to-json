@@ -85,17 +85,14 @@ def summarize_content_with_gemini(file_ref, custom_prompt, response_schema):
     try:
         model = genai.GenerativeModel(model_name='gemini-1.5-flash')
 
-        # Check if response_schema is a dictionary and convert it to a JSON string if necessary
-        if isinstance(response_schema, dict):
-            response_schema_str = json.dumps(response_schema, indent=2)
-        else:
-            response_schema_str = response_schema
-
-        # Prepare the full prompt with the correct response schema format
-        full_prompt = f"{custom_prompt}\n\nPlease extract the information according to the following schema:\n\n{response_schema_str}"
-        logger.info(f"Full prompt for summarization: {full_prompt}")
-
-        response = model.generate_content([file_ref, full_prompt])
+        # Use the response schema from the request payload
+        response = model.generate_content(
+            custom_prompt,
+            generation_config=genai.GenerationConfig(
+                response_mime_type="application/json",
+                response_schema=response_schema  # Pass the schema dynamically
+            )
+        )
         logger.info(f"Response from Gemini: {response}")
 
         if response.candidates and response.candidates[0].content.parts:
