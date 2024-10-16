@@ -119,7 +119,7 @@ def summarize_content_with_gemini(file_ref, custom_prompt, response_schema):
             elif "Exam style" in summary:
                 assessment_type = "Exam style"
             else:
-                assessment_type = "Exam style"  # Fallback in case Gemini doesn't return either
+                assessment_type = "Exam style"  # Fallback to 'Exam style' if neither is detected
 
             # Extract assessment name from the summary (Assume it follows the assessment type)
             assessment_name = summary.splitlines()[-1].strip() if summary else "Unknown"
@@ -129,7 +129,7 @@ def summarize_content_with_gemini(file_ref, custom_prompt, response_schema):
             return summary, assessment_type, assessment_name
         else:
             logger.warning("No summary extracted from the PDF.")
-            return "", "Unknown", "Unknown"
+            return "", "Exam style", "Unknown"
     except Exception as e:
         logger.error(f"Error in summarize_content_with_gemini: {str(e)}")
         raise
@@ -187,6 +187,36 @@ def process_pdf_async_assessment(pdf_url, record_id, custom_prompt, response_sch
     # Submit the task to the thread pool
     executor.submit(process)
 
+def process_pdf_async_submission(pdf_url, record_id, custom_prompt, response_schema, text_extraction_prompt, target_field_id):
+    def process():
+        try:
+            with tempfile.TemporaryDirectory() as temp_dir:
+                request_dir = pathlib.Path(temp_dir)
+
+                # Download the PDF
+                pdf_path = download_pdf(pdf_url, request_dir)
+
+                # Upload the PDF to Gemini API
+                file_ref = upload_pdf_to_gemini(pdf_path)
+
+                # Extract text with the text_extraction_prompt
+                extracted_text = extract_text_with_gemini(file_ref, text_extraction_prompt)
+
+                # Generate summary with the custom_prompt and response_schema
+                summary, _ = summarize_content_with_gemini(file_ref, custom_prompt, response_schema)
+
+                # Send the summary and extracted text to Airtable
+                send_to_airtable(record_id, summary, extracted_text, target_field_id)
+
+        except Exception as e:
+            error_message = f"An error occurred during processing: {str(e)}"
+            logger.error(error_message)
+            logger.error(traceback.format_exc())
+            send_to_airtable(record_id, {"error": error_message}, "", target_field_id)
+
+    # Submit the task to the thread pool
+    executor.submit(process)
+
 @app.route('/process_pdf/assessment', methods=['POST'])
 def process_pdf_assessment_route():
     try:
@@ -204,6 +234,39 @@ def process_pdf_assessment_route():
 
         if pdf_url and record_id and response_schema and text_extraction_prompt and target_field_id:
             process_pdf_async_assessment(pdf_url, record_id, custom_prompt, response_schema, text_extraction_prompt, target_field_id)
+            return jsonify({"status": "processing started"}), 200
+        else:
+            missing_fields = [field for field in ['pdf_url', 'record_id', 'response_schema', 'text_extraction_prompt', 'targetFieldId'] if not locals().get(field)]
+            error_message = f"Missing required fields: {', '.join(missing_fields)}"
+            logger.error(error_message)
+            return jsonify({"error": error_message}), 400
+    except json.JSONDecodeError as e:
+        error_message = f"Invalid JSON format in request body or response_schema: {str(e)}"
+        logger.error(error_message)
+        return jsonify({"error": error_message}), 400
+    except Exception as e:
+        error_message = f"An unexpected error occurred: {str(e)}"
+        logger.error(error_message)
+        logger.error(traceback.format_exc())
+        return jsonify({"error": error_message}), 500
+
+@app.route('/process_pdf/submission', methods=['POST'])
+def process_pdf_submission_route():
+    try:
+        data = request.json  # Assuming Airtable sends JSON data
+        pdf_url = data.get('pdf_url')
+        record_id = data.get('record_id')
+        custom_prompt = data.get('custom_prompt')
+        response_schema = data.get('response_schema')
+        text_extraction_prompt = data.get('text_extraction_prompt')
+        target_field_id = data.get('targetFieldId')  # Extract targetFieldId
+
+        # Convert response_schema from string to dictionary if needed
+        if isinstance(response_schema, str):
+            response_schema = json.loads(response_schema)
+
+        if pdf_url and record_id and response_schema and text_extraction_prompt and target_field_id:
+            process_pdf_async_submission(pdf_url, record_id, custom_prompt, response_schema, text_extraction_prompt, target_field_id)
             return jsonify({"status": "processing started"}), 200
         else:
             missing_fields = [field for field in ['pdf_url', 'record_id', 'response_schema', 'text_extraction_prompt', 'targetFieldId'] if not locals().get(field)]
