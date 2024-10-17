@@ -138,9 +138,9 @@ def summarize_content_with_gemini(file_ref, custom_prompt, response_schema):
         logger.error(f"Error in summarize_content_with_gemini: {str(e)}")
         raise
 
-def send_to_airtable(record_id, json_content, assessment_type, assessment_name, target_field_id):
+def send_to_airtable(record_id, json_content, assessment_type, assessment_name, extracted_text, target_field_id):
     """
-    Send the processed JSON content, assessment type, and assessment name to the Airtable webhook.
+    Send the processed JSON content, assessment type, assessment name, and extracted text to the Airtable webhook.
     """
     try:
         data = {
@@ -148,6 +148,7 @@ def send_to_airtable(record_id, json_content, assessment_type, assessment_name, 
             "json_content": json_content,  # JSON data
             "assessmentType": assessment_type,  # Assessment type
             "assessmentName": assessment_name,  # Assessment name
+            "extracted_text": extracted_text,  # Extracted text from PDF
             "target_field_id": target_field_id
         }
 
