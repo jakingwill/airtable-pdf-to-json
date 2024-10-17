@@ -163,8 +163,8 @@ def process_pdf_async_assessment(pdf_url, record_id, custom_prompt, response_sch
             with tempfile.TemporaryDirectory() as temp_dir:
                 request_dir = pathlib.Path(temp_dir)
 
-                # Download and process the PDF
-                pdf_path = process_pdf_or_image(pdf_url, request_dir)
+                # Download the PDF (using the original download_pdf function)
+                pdf_path = download_pdf(pdf_url, request_dir)
 
                 # Upload the PDF to Gemini API
                 file_ref = upload_pdf_to_gemini(pdf_path)
