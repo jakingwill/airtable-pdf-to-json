@@ -77,6 +77,7 @@ def extract_text_with_gemini(file_ref, text_extraction_prompt):
     except Exception as e:
         logger.error(f"Error in extract_text_with_gemini: {str(e)}")
         raise
+
 def summarize_content_with_gemini(file_ref, custom_prompt, response_schema):
     """
     Extract JSON content, determine assessment type, and generate assessment name using the Gemini API.
@@ -169,10 +170,13 @@ def process_pdf_async_assessment(pdf_url, record_id, custom_prompt, response_sch
                 # Upload the PDF to Gemini API
                 file_ref = upload_pdf_to_gemini(pdf_path)
 
+                # Extract the text using text_extraction_prompt
+                extracted_text = extract_text_with_gemini(file_ref, text_extraction_prompt)
+
                 # Extract the JSON, assessment type, and assessment name
                 json_content, assessment_type, assessment_name = summarize_content_with_gemini(file_ref, custom_prompt, response_schema)
 
-                # Send the JSON, assessment type, and name separately to Airtable
+                # Send the JSON, extracted text, assessment type, and name separately to Airtable
                 send_to_airtable(record_id, json_content, assessment_type, assessment_name, target_field_id)
 
         except Exception as e:
