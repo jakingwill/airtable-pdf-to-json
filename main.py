@@ -178,13 +178,13 @@ def process_pdf_async_assessment(pdf_url, record_id, custom_prompt, response_sch
                 json_content, assessment_type, assessment_name = summarize_content_with_gemini(file_ref, custom_prompt, response_schema)
 
                 # Send the JSON, extracted text, assessment type, and name separately to Airtable
-                send_to_airtable(record_id, json_content, assessment_type, assessment_name, target_field_id)
+                send_to_airtable(record_id, json_content, assessment_type, assessment_name, extracted_text, target_field_id)
 
         except Exception as e:
             error_message = f"An error occurred during processing: {str(e)}"
             logger.error(error_message)
             logger.error(traceback.format_exc())
-            send_to_airtable(record_id, {"error": error_message}, "", "", target_field_id)
+            send_to_airtable(record_id, {"error": error_message}, "", "", "", target_field_id)
 
     # Submit the task to the thread pool
     executor.submit(process)
@@ -208,13 +208,13 @@ def process_pdf_async_submission(pdf_url, record_id, custom_prompt, response_sch
                 summary, _, _ = summarize_content_with_gemini(file_ref, custom_prompt, response_schema)
 
                 # Send the summary and extracted text to Airtable
-                send_to_airtable(record_id, summary, extracted_text, target_field_id)
+                send_to_airtable(record_id, summary, "", "", extracted_text, target_field_id)
 
         except Exception as e:
             error_message = f"An error occurred during processing: {str(e)}"
             logger.error(error_message)
             logger.error(traceback.format_exc())
-            send_to_airtable(record_id, {"error": error_message}, "", target_field_id)
+            send_to_airtable(record_id, {"error": error_message}, "", "", "", target_field_id)
 
     # Submit the task to the thread pool
     executor.submit(process)
