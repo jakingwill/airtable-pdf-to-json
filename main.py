@@ -9,7 +9,6 @@ import json
 import tempfile
 import logging
 import traceback
-from PIL import Image
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -25,57 +24,25 @@ airtable_webhook_url = os.getenv('AIRTABLE_WEBHOOK', 'http://your-airtable-webho
 # Create a thread pool executor for tasks
 executor = ThreadPoolExecutor(max_workers=1)
 
-def is_image_file(file_path):
+def download_pdf(pdf_url, download_folder):
     """
-    Check if the file is an image based on its extension.
-    """
-    image_extensions = ['.jpg', '.jpeg', '.png', '.heic', '.tiff', '.bmp']
-    return pathlib.Path(file_path).suffix.lower() in image_extensions
-
-def convert_image_to_pdf(image_path, output_folder):
-    """
-    Convert an image file to a PDF and save it in the output folder.
-    """
-    try:
-        image = Image.open(image_path)
-        pdf_path = pathlib.Path(output_folder) / 'converted_image.pdf'
-        # Convert the image to RGB mode (required for PDF conversion)
-        if image.mode in ("RGBA", "P"):
-            image = image.convert("RGB")
-        image.save(pdf_path, "PDF", resolution=100.0)
-        logger.info(f"Converted image to PDF: {pdf_path}")
-        return str(pdf_path)
-    except Exception as e:
-        logger.error(f"Error converting image to PDF: {str(e)}")
-        raise
-
-def process_pdf_or_image(pdf_or_image_url, download_folder):
-    """
-    Download the file and process it, converting images to PDF if necessary.
+    Download a PDF file from the given URL and save it to the specified download folder.
     """
     try:
         download_folder = pathlib.Path(download_folder)
         download_folder.mkdir(parents=True, exist_ok=True)  # Ensure the directory exists
-        file_path = download_folder / 'downloaded_file'
+        file_path = download_folder / 'downloaded_pdf.pdf'
 
-        response = requests.get(pdf_or_image_url, timeout=60)  # Set a timeout for the request
+        response = requests.get(pdf_url, timeout=60)  # Set a timeout for the request
         response.raise_for_status()  # Raise an error if the request failed
-
-        file_extension = pathlib.Path(pdf_or_image_url).suffix
-        file_path = file_path.with_suffix(file_extension)
 
         with open(file_path, 'wb') as file:
             file.write(response.content)
 
-        logger.info(f"Downloaded file to: {file_path}")
-
-        # Check if it's an image, and convert it to PDF if needed
-        if is_image_file(file_path):
-            file_path = convert_image_to_pdf(file_path, download_folder)
-
+        logger.info(f"Downloaded PDF to: {file_path}")
         return str(file_path)
     except requests.RequestException as e:
-        logger.error(f"Error downloading file from {pdf_or_image_url}: {str(e)}")
+        logger.error(f"Error downloading PDF from {pdf_url}: {str(e)}")
         raise
 
 def upload_pdf_to_gemini(pdf_path):
@@ -129,7 +96,7 @@ def summarize_content_with_gemini(file_ref, custom_prompt, response_schema):
         )
 
         assessment_name_prompt = (
-            "Please give this assessment an appropriate name. The title of the assessment is often found in the beginning of the extracted text of the assessment so use that, "
+            "Please give this assessment an appropriate name. The title of the assessment might be in the text already, "
             "but if not, provide an intuitive name for the assessment using the content provided. "
             "If you can identify the subject and the grade in the text provided, please include that in the name. "
             "In your output, please only provide the name of the assessment - no pre-text or post-text should exist in your output."
@@ -196,8 +163,8 @@ def process_pdf_async_assessment(pdf_url, record_id, custom_prompt, response_sch
             with tempfile.TemporaryDirectory() as temp_dir:
                 request_dir = pathlib.Path(temp_dir)
 
-                # Download the PDF or image and convert it to PDF if necessary
-                pdf_path = process_pdf_or_image(pdf_url, request_dir)
+                # Download the PDF
+                pdf_path = download_pdf(pdf_url, request_dir)
 
                 # Upload the PDF to Gemini API
                 file_ref = upload_pdf_to_gemini(pdf_path)
@@ -226,8 +193,8 @@ def process_pdf_async_submission(pdf_url, record_id, custom_prompt, response_sch
             with tempfile.TemporaryDirectory() as temp_dir:
                 request_dir = pathlib.Path(temp_dir)
 
-                # Download the PDF or image and convert it to PDF if necessary
-                pdf_path = process_pdf_or_image(pdf_url, request_dir)
+                # Download the PDF
+                pdf_path = download_pdf(pdf_url, request_dir)
 
                 # Upload the PDF to Gemini API
                 file_ref = upload_pdf_to_gemini(pdf_path)
