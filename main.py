@@ -89,9 +89,9 @@ def summarize_content_with_gemini(file_ref, custom_prompt, response_schema):
         json_prompt = f"{custom_prompt}\n\nPlease extract the information according to the following schema:\n\n{json.dumps(response_schema, indent=2)}"
         assessment_type_prompt = (
             "Your job is to analyse the extracted text and decide which of the following options this assessment meets, in terms of assessment type. "
-            "Essay: You should select this option if you think the assessment is an essay-style assessment that probably contains only one question. "
+            "Essay: You should select this option if you think the assessment is an essay-style assessment that probably contains only one question and the marking guide is likely a rubric or table format. "
             "Exam style: You should select this option if you think the assessment is an exam-style assessment. "
-            "The definition of this is that it contains multiple questions that the student has to answer, and likely has question numbering (e.g., 1.1, 1.2, etc.). "
+            "The definition of exam style is that it contains multiple questions that the student has to answer, and likely has question numbering (e.g., 1.1, 1.2, etc.). "
             "The output that you give me should simply be the assessment type that you think is most likely. "
             "Therefore your output should simply either be: 'Essay' OR 'Exam style'."
         )
