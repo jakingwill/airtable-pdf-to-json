@@ -138,9 +138,9 @@ def summarize_content_with_gemini(file_ref, custom_prompt, response_schema):
         logger.error(f"Error in summarize_content_with_gemini: {str(e)}")
         raise
 
-def send_to_airtable(record_id, json_content, assessment_type, assessment_name, extracted_text, target_field_id):
+def send_to_airtable(record_id, json_content, assessment_type, assessment_name, extracted_text, target_field_id, status_message):
     """
-    Send the processed JSON content, assessment type, assessment name, and extracted text to the Airtable webhook.
+    Send the processed JSON content, assessment type, assessment name, extracted text, and status message to the Airtable webhook.
     """
     try:
         data = {
@@ -149,6 +149,7 @@ def send_to_airtable(record_id, json_content, assessment_type, assessment_name, 
             "assessmentType": assessment_type,  # Assessment type
             "assessmentName": assessment_name,  # Assessment name
             "extracted_text": extracted_text,  # Extracted text from PDF
+            "status_message": status_message,  # Status message (either error or success)
             "target_field_id": target_field_id
         }
 
@@ -177,17 +178,18 @@ def process_pdf_async_assessment(pdf_url, record_id, custom_prompt, response_sch
                 # Extract the JSON, assessment type, and assessment name
                 json_content, assessment_type, assessment_name = summarize_content_with_gemini(file_ref, custom_prompt, response_schema)
 
-                # Send the JSON, extracted text, assessment type, and name separately to Airtable
-                send_to_airtable(record_id, json_content, assessment_type, assessment_name, extracted_text, target_field_id)
+                # Send the data and success message to Airtable
+                send_to_airtable(record_id, json_content, assessment_type, assessment_name, extracted_text, target_field_id, "Successfully processed by Gemini")
 
         except Exception as e:
             error_message = f"An error occurred during processing: {str(e)}"
             logger.error(error_message)
             logger.error(traceback.format_exc())
-            send_to_airtable(record_id, {"error": error_message}, "", "", "", target_field_id)
+            send_to_airtable(record_id, "", "", "", "", target_field_id, error_message)
 
     # Submit the task to the thread pool
     executor.submit(process)
+
 
 def process_pdf_async_submission(pdf_url, record_id, custom_prompt, response_schema, text_extraction_prompt, target_field_id):
     def process():
@@ -207,14 +209,14 @@ def process_pdf_async_submission(pdf_url, record_id, custom_prompt, response_sch
                 # Generate summary with the custom_prompt and response_schema
                 summary, _, _ = summarize_content_with_gemini(file_ref, custom_prompt, response_schema)
 
-                # Send the summary and extracted text to Airtable
-                send_to_airtable(record_id, summary, "", "", extracted_text, target_field_id)
+                # Send the summary, extracted text, and success message to Airtable
+                send_to_airtable(record_id, summary, "", "", extracted_text, target_field_id, "Successfully processed by Gemini")
 
         except Exception as e:
             error_message = f"An error occurred during processing: {str(e)}"
             logger.error(error_message)
             logger.error(traceback.format_exc())
-            send_to_airtable(record_id, {"error": error_message}, "", "", "", target_field_id)
+            send_to_airtable(record_id, "", "", "", "", target_field_id, error_message)
 
     # Submit the task to the thread pool
     executor.submit(process)
