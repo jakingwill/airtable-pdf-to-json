@@ -121,7 +121,7 @@ def summarize_content_with_gemini(file_ref, custom_prompt, response_schema):
         elif type_response.candidates and "Exam style" in type_response.candidates[0].content.parts[0].text:
             assessment_type = "Exam style"
         else:
-            assessment_type = "Unknown"
+            assessment_type = "Exam style"
 
         logger.info(f"Determined assessment type: {assessment_type}")
 
