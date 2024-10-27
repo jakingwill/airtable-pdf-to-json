@@ -482,6 +482,17 @@ MarkupSafe = ">=2.0"
 i18n = ["Babel (>=2.7)"]
 
 [[package]]
+name = "json-repair"
+version = "0.30.0"
+description = "A package to repair broken json strings"
+optional = false
+python-versions = ">=3.8"
+files = [
+    {file = "json_repair-0.30.0-py3-none-any.whl", hash = "sha256:bda4a5552dc12085c6363ff5acfcdb0c9cafc629989a2112081b7e205828228d"},
+    {file = "json_repair-0.30.0.tar.gz", hash = "sha256:24f12087a0e385ed47207eab1fca12bffd473e48db5bb803793d6c4fd97377ce"},
+]
+
+[[package]]
 name = "markupsafe"
 version = "2.1.5"
 description = "Safely add untrusted strings to HTML/XML markup."
@@ -1035,4 +1046,4 @@ watchdog = ["watchdog (>=2.3)"]
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.10.0,<3.12"
-content-hash = "14c562b1835c6ec69c1bac4f28cb41d168d1f8a5bfc8a51926a4b145a7c3e0e4"
+content-hash = "4bc1dca4f39a1ccf7b35677b68c7794b2b9f40bea9087757cf644242148935ee"
