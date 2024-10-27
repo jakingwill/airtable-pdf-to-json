@@ -14,6 +14,7 @@ tqdm = "^4.66.4"
 gunicorn = "^20.1.0"
 Pillow = "^9.2.0"  # Pillow is used for image processing (e.g., to display images)
 poppler-utils = "^0.1.0"  # Poppler-utils for handling PDF to image conversion
+json-repair = "^0.30.0"
 
 [tool.poetry.scripts]
 start = "gunicorn main:app"
