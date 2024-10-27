@@ -9,6 +9,8 @@ import json
 import tempfile
 import logging
 import traceback
+from json.decoder import JSONDecodeError
+import jsonrepair  # Ensure this is installed with `pip install jsonrepair`
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -25,16 +27,13 @@ airtable_webhook_url = os.getenv('AIRTABLE_WEBHOOK', 'http://your-airtable-webho
 executor = ThreadPoolExecutor(max_workers=1)
 
 def download_pdf(pdf_url, download_folder):
-    """
-    Download a PDF file from the given URL and save it to the specified download folder.
-    """
     try:
         download_folder = pathlib.Path(download_folder)
-        download_folder.mkdir(parents=True, exist_ok=True)  # Ensure the directory exists
+        download_folder.mkdir(parents=True, exist_ok=True)
         file_path = download_folder / 'downloaded_pdf.pdf'
 
-        response = requests.get(pdf_url, timeout=60)  # Set a timeout for the request
-        response.raise_for_status()  # Raise an error if the request failed
+        response = requests.get(pdf_url, timeout=60)
+        response.raise_for_status()
 
         with open(file_path, 'wb') as file:
             file.write(response.content)
@@ -46,9 +45,6 @@ def download_pdf(pdf_url, download_folder):
         raise
 
 def upload_pdf_to_gemini(pdf_path):
-    """
-    Upload a PDF file to the Gemini API.
-    """
     try:
         file_ref = genai.upload_file(str(pdf_path))
         logger.info(f"Successfully uploaded {pdf_path} to Gemini")
@@ -58,9 +54,6 @@ def upload_pdf_to_gemini(pdf_path):
         raise
 
 def extract_text_with_gemini(file_ref, text_extraction_prompt):
-    """
-    Extract text from the PDF using the Gemini API.
-    """
     try:
         model = genai.GenerativeModel(model_name='gemini-1.5-flash')
 
@@ -78,14 +71,28 @@ def extract_text_with_gemini(file_ref, text_extraction_prompt):
         logger.error(f"Error in extract_text_with_gemini: {str(e)}")
         raise
 
+def validate_and_repair_json(json_content):
+    """
+    Validates and attempts to repair JSON content if it is malformed.
+    """
+    try:
+        parsed_json = json.loads(json_content)
+        return json.dumps(parsed_json)
+    except JSONDecodeError as e:
+        logger.warning("JSON is malformed; attempting to repair.")
+        try:
+            repaired_json = jsonrepair.repair(json_content)
+            parsed_json = json.loads(repaired_json)
+            return json.dumps(parsed_json)
+        except JSONDecodeError as repair_error:
+            logger.error(f"Failed to repair JSON: {repair_error}")
+            logger.error(f"Context around error: {json_content[max(0, e.pos - 40):e.pos + 40]}")
+            return ""
+
 def summarize_content_with_gemini(file_ref, custom_prompt, response_schema):
-    """
-    Extract JSON content, determine assessment type, and generate assessment name using the Gemini API.
-    """
     try:
         model = genai.GenerativeModel(model_name='gemini-1.5-flash')
 
-        # Separate the custom prompt for JSON extraction, type, and name
         json_prompt = f"{custom_prompt}\n\nPlease extract the information according to the following schema:\n\n{json.dumps(response_schema, indent=2)}"
         assessment_type_prompt = (
             "Your job is to analyse the extracted text and decide which of the following options this assessment meets, in terms of assessment type. "
@@ -102,20 +109,18 @@ def summarize_content_with_gemini(file_ref, custom_prompt, response_schema):
             "In your output, please only provide the name of the assessment - no pre-text or post-text should exist in your output."
         )
 
-        # Generate content separately for JSON, type, and name
         json_response = model.generate_content([file_ref, json_prompt])
         type_response = model.generate_content([file_ref, assessment_type_prompt])
         name_response = model.generate_content([file_ref, assessment_name_prompt])
 
-        # Extract the JSON content
         if json_response.candidates and json_response.candidates[0].content.parts:
-            json_content = json_response.candidates[0].content.parts[0].text
-            logger.info(f"Extracted JSON content: {json_content}")
+            raw_json_content = json_response.candidates[0].content.parts[0].text
+            json_content = validate_and_repair_json(raw_json_content)
+            logger.info(f"Validated and repaired JSON content: {json_content}")
         else:
             logger.warning("No JSON content extracted.")
             json_content = ""
 
-        # Extract the assessment type
         if type_response.candidates and "Essay" in type_response.candidates[0].content.parts[0].text:
             assessment_type = "Essay"
         elif type_response.candidates and "Exam style" in type_response.candidates[0].content.parts[0].text:
@@ -125,7 +130,6 @@ def summarize_content_with_gemini(file_ref, custom_prompt, response_schema):
 
         logger.info(f"Determined assessment type: {assessment_type}")
 
-        # Extract the assessment name
         if name_response.candidates and name_response.candidates[0].content.parts:
             assessment_name = name_response.candidates[0].content.parts[0].text.strip()
             logger.info(f"Generated assessment name: {assessment_name}")
@@ -139,17 +143,14 @@ def summarize_content_with_gemini(file_ref, custom_prompt, response_schema):
         raise
 
 def send_to_airtable(record_id, json_content, assessment_type, assessment_name, extracted_text, target_field_id, status_message):
-    """
-    Send the processed JSON content, assessment type, assessment name, extracted text, and status message to the Airtable webhook.
-    """
     try:
         data = {
             "record_id": record_id,
-            "json_content": json_content,  # JSON data
-            "assessmentType": assessment_type,  # Assessment type
-            "assessmentName": assessment_name,  # Assessment name
-            "extracted_text": extracted_text,  # Extracted text from PDF
-            "status_message": status_message,  # Status message (either error or success)
+            "json_content": json_content,
+            "assessmentType": assessment_type,
+            "assessmentName": assessment_name,
+            "extracted_text": extracted_text,
+            "status_message": status_message,
             "target_field_id": target_field_id
         }
 
@@ -166,19 +167,11 @@ def process_pdf_async_assessment(pdf_url, record_id, custom_prompt, response_sch
             with tempfile.TemporaryDirectory() as temp_dir:
                 request_dir = pathlib.Path(temp_dir)
 
-                # Download the PDF (using the original download_pdf function)
                 pdf_path = download_pdf(pdf_url, request_dir)
-
-                # Upload the PDF to Gemini API
                 file_ref = upload_pdf_to_gemini(pdf_path)
-
-                # Extract the text using text_extraction_prompt
                 extracted_text = extract_text_with_gemini(file_ref, text_extraction_prompt)
 
-                # Extract the JSON, assessment type, and assessment name
                 json_content, assessment_type, assessment_name = summarize_content_with_gemini(file_ref, custom_prompt, response_schema)
-
-                # Send the data and success message to Airtable
                 send_to_airtable(record_id, json_content, assessment_type, assessment_name, extracted_text, target_field_id, "Successfully processed by Gemini")
 
         except Exception as e:
@@ -187,9 +180,7 @@ def process_pdf_async_assessment(pdf_url, record_id, custom_prompt, response_sch
             logger.error(traceback.format_exc())
             send_to_airtable(record_id, "", "", "", "", target_field_id, error_message)
 
-    # Submit the task to the thread pool
     executor.submit(process)
-
 
 def process_pdf_async_submission(pdf_url, record_id, custom_prompt, response_schema, text_extraction_prompt, target_field_id):
     def process():
@@ -197,19 +188,11 @@ def process_pdf_async_submission(pdf_url, record_id, custom_prompt, response_sch
             with tempfile.TemporaryDirectory() as temp_dir:
                 request_dir = pathlib.Path(temp_dir)
 
-                # Download the PDF
                 pdf_path = download_pdf(pdf_url, request_dir)
-
-                # Upload the PDF to Gemini API
                 file_ref = upload_pdf_to_gemini(pdf_path)
-
-                # Extract text with the text_extraction_prompt
                 extracted_text = extract_text_with_gemini(file_ref, text_extraction_prompt)
 
-                # Generate summary with the custom_prompt and response_schema
                 summary, _, _ = summarize_content_with_gemini(file_ref, custom_prompt, response_schema)
-
-                # Send the summary, extracted text, and success message to Airtable
                 send_to_airtable(record_id, summary, "", "", extracted_text, target_field_id, "Successfully processed by Gemini")
 
         except Exception as e:
@@ -218,21 +201,19 @@ def process_pdf_async_submission(pdf_url, record_id, custom_prompt, response_sch
             logger.error(traceback.format_exc())
             send_to_airtable(record_id, "", "", "", "", target_field_id, error_message)
 
-    # Submit the task to the thread pool
     executor.submit(process)
 
 @app.route('/process_pdf/assessment', methods=['POST'])
 def process_pdf_assessment_route():
     try:
-        data = request.json  # Assuming Airtable sends JSON data
+        data = request.json
         pdf_url = data.get('pdf_url')
         record_id = data.get('record_id')
         custom_prompt = data.get('custom_prompt')
         response_schema = data.get('response_schema')
         text_extraction_prompt = data.get('text_extraction_prompt')
-        target_field_id = data.get('targetFieldId')  # Extract targetFieldId
+        target_field_id = data.get('targetFieldId')
 
-        # Convert response_schema from string to dictionary if needed
         if isinstance(response_schema, str):
             response_schema = json.loads(response_schema)
 
@@ -257,15 +238,14 @@ def process_pdf_assessment_route():
 @app.route('/process_pdf/submission', methods=['POST'])
 def process_pdf_submission_route():
     try:
-        data = request.json  # Assuming Airtable sends JSON data
+        data = request.json
         pdf_url = data.get('pdf_url')
         record_id = data.get('record_id')
         custom_prompt = data.get('custom_prompt')
         response_schema = data.get('response_schema')
         text_extraction_prompt = data.get('text_extraction_prompt')
-        target_field_id = data.get('targetFieldId')  # Extract targetFieldId
+        target_field_id = data.get('targetFieldId')
 
-        # Convert response_schema from string to dictionary if needed
         if isinstance(response_schema, str):
             response_schema = json.loads(response_schema)
 
@@ -287,7 +267,6 @@ def process_pdf_submission_route():
         logger.error(traceback.format_exc())
         return jsonify({"error": error_message}), 500
 
-# Ensure the thread pool executor shuts down cleanly
 atexit.register(executor.shutdown)
 
 if __name__ == '__main__':
