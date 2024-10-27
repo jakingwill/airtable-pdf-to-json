@@ -9,8 +9,7 @@ import json
 import tempfile
 import logging
 import traceback
-from json.decoder import JSONDecodeError
-import jsonrepair  # Ensure this is installed with `pip install jsonrepair`
+from json_repair import repair_json  # Import json-repair as shown in docs
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -76,18 +75,22 @@ def validate_and_repair_json(json_content):
     Validates and attempts to repair JSON content if it is malformed.
     """
     try:
+        # Try to load the JSON to ensure it's valid
         parsed_json = json.loads(json_content)
         return json.dumps(parsed_json)
     except JSONDecodeError as e:
+        # If parsing fails, attempt repair
         logger.warning("JSON is malformed; attempting to repair.")
         try:
-            repaired_json = jsonrepair.repair(json_content)
+            repaired_json = repair_json(json_content)  # Using json-repair to fix the JSON
+            # Try parsing again to ensure repair was successful
             parsed_json = json.loads(repaired_json)
-            return json.dumps(parsed_json)
+            return json.dumps(parsed_json)  # Return repaired JSON
         except JSONDecodeError as repair_error:
+            # Log detailed context if repair fails
             logger.error(f"Failed to repair JSON: {repair_error}")
             logger.error(f"Context around error: {json_content[max(0, e.pos - 40):e.pos + 40]}")
-            return ""
+            return ""  # Return empty string if JSON is not repairable
 
 def summarize_content_with_gemini(file_ref, custom_prompt, response_schema):
     try:
