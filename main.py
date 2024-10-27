@@ -9,8 +9,8 @@ import json
 import tempfile
 import logging
 import traceback
-from jsonrepair import repair_json  # Correct import for json-repair
-from json import JSONDecodeError  # Import JSONDecodeError explicitly
+from json_repair import repair_json  # Import json-repair as shown in docs
+from json import JSONDecodeError
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
