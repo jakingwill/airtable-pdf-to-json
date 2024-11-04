@@ -2,6 +2,7 @@ from concurrent.futures import ThreadPoolExecutor
 import atexit
 import os
 import google.generativeai as genai
+import google.api_core.exceptions  # Import google exceptions
 import requests
 from flask import Flask, request, jsonify
 import pathlib
@@ -9,8 +10,9 @@ import json
 import tempfile
 import logging
 import traceback
-from json_repair import repair_json  # Import json-repair as shown in docs
+from json_repair import repair_json
 from json import JSONDecodeError
+import time
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -87,13 +89,17 @@ def validate_and_repair_json(json_content):
             return ""
 
 def generate_marking_guide_with_gemini(file_ref, marking_guide_prompt, retries=3, delay=5):
+    if not file_ref:
+        logger.error("File reference is None. Cannot generate marking guide.")
+        return None
+    
     try:
         model = genai.GenerativeModel(model_name='gemini-1.5-flash')
-
+        
         for attempt in range(retries):
             try:
                 response = model.generate_content([file_ref, marking_guide_prompt])
-
+                
                 if response.candidates and response.candidates[0].content.parts:
                     marking_guide_text = response.candidates[0].content.parts[0].text
                     logger.info(f"Generated marking guide: {marking_guide_text}")
