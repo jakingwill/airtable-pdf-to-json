@@ -72,46 +72,55 @@ def extract_text_with_gemini(file_ref, text_extraction_prompt):
         raise
 
 def validate_and_repair_json(json_content):
-    """
-    Validates and attempts to repair JSON content if it is malformed.
-    """
     try:
-        # Try to load the JSON to ensure it's valid
         parsed_json = json.loads(json_content)
         return json.dumps(parsed_json)
     except JSONDecodeError as e:
-        # If parsing fails, attempt repair
         logger.warning("JSON is malformed; attempting to repair.")
         try:
-            repaired_json = repair_json(json_content)  # Using json-repair to fix the JSON
-            # Try parsing again to ensure repair was successful
+            repaired_json = repair_json(json_content)
             parsed_json = json.loads(repaired_json)
-            return json.dumps(parsed_json)  # Return repaired JSON
+            return json.dumps(parsed_json)
         except JSONDecodeError as repair_error:
-            # Log detailed context if repair fails
             logger.error(f"Failed to repair JSON: {repair_error}")
             logger.error(f"Context around error: {json_content[max(0, e.pos - 40):e.pos + 40]}")
-            return ""  # Return empty string if JSON is not repairable
+            return ""
 
-def summarize_content_with_gemini(file_ref, custom_prompt, response_schema):
+def generate_marking_guide_with_gemini(file_ref, marking_guide_prompt, retries=3, delay=5):
+    try:
+        model = genai.GenerativeModel(model_name='gemini-1.5-flash')
+
+        for attempt in range(retries):
+            try:
+                response = model.generate_content([file_ref, marking_guide_prompt])
+
+                if response.candidates and response.candidates[0].content.parts:
+                    marking_guide_text = response.candidates[0].content.parts[0].text
+                    logger.info(f"Generated marking guide: {marking_guide_text}")
+                    return marking_guide_text
+                else:
+                    logger.warning("No marking guide generated.")
+                    return ""
+            except google.api_core.exceptions.InternalServerError as e:
+                logger.error(f"Attempt {attempt + 1} failed with internal error: {str(e)}")
+                if attempt < retries - 1:
+                    logger.info(f"Retrying in {delay} seconds...")
+                    time.sleep(delay)
+                else:
+                    raise e  # Raise error if all retries fail
+
+    except Exception as e:
+        logger.error(f"Error generating marking guide with Gemini: {str(e)}")
+        raise
+
+def summarize_content_with_gemini(file_ref, custom_prompt, response_schema, assessment_type_prompt, assessment_name_prompt, marking_guide_prompt):
     try:
         model = genai.GenerativeModel(model_name='gemini-1.5-flash')
 
         json_prompt = f"{custom_prompt}\n\nPlease extract the information according to the following schema:\n\n{json.dumps(response_schema, indent=2)}"
-        assessment_type_prompt = (
-            "Your job is to analyse the extracted text and decide which of the following options this assessment meets, in terms of assessment type. "
-            "Essay: You should select this option if you think the assessment is an essay-style assessment that probably contains only one question and the marking guide is likely a rubric or table format. "
-            "Exam style: You should select this option if you think the assessment is an exam-style assessment. "
-            "The definition of exam style is that it contains multiple questions that the student has to answer, and likely has question numbering (e.g., 1.1, 1.2, etc.). "
-            "The output that you give me should simply be the assessment type that you think is most likely. "
-            "Therefore your output should simply either be: 'Essay' OR 'Exam style'."
-        )
-        assessment_name_prompt = (
-            "Please give this assessment an appropriate name. The title of the assessment might be in the text already, "
-            "but if not, provide an intuitive name for the assessment using the content provided. "
-            "If you can identify the subject and the grade in the text provided, please include that in the name. "
-            "In your output, please only provide the name of the assessment - no pre-text or post-text should exist in your output."
-        )
+
+        # Generate marking guide
+        marking_guide = generate_marking_guide_with_gemini(file_ref, marking_guide_prompt)
 
         json_response = model.generate_content([file_ref, json_prompt])
         type_response = model.generate_content([file_ref, assessment_type_prompt])
@@ -140,13 +149,13 @@ def summarize_content_with_gemini(file_ref, custom_prompt, response_schema):
         else:
             assessment_name = "Unknown"
 
-        return json_content, assessment_type, assessment_name
+        return json_content, assessment_type, assessment_name, marking_guide
 
     except Exception as e:
         logger.error(f"Error in summarize_content_with_gemini: {str(e)}")
         raise
 
-def send_to_airtable(record_id, json_content, assessment_type, assessment_name, extracted_text, target_field_id, status_message):
+def send_to_airtable(record_id, json_content, assessment_type, assessment_name, extracted_text, new_marking_guide, target_field_id, status_message):
     try:
         data = {
             "record_id": record_id,
@@ -154,6 +163,7 @@ def send_to_airtable(record_id, json_content, assessment_type, assessment_name, 
             "assessmentType": assessment_type,
             "assessmentName": assessment_name,
             "extracted_text": extracted_text,
+            "new_marking_guide": new_marking_guide,
             "status_message": status_message,
             "target_field_id": target_field_id
         }
@@ -165,7 +175,7 @@ def send_to_airtable(record_id, json_content, assessment_type, assessment_name, 
         logger.error(f"Error sending data to Airtable: {str(e)}")
         raise
 
-def process_pdf_async_assessment(pdf_url, record_id, custom_prompt, response_schema, text_extraction_prompt, target_field_id):
+def process_pdf_async_assessment(pdf_url, record_id, custom_prompt, response_schema, text_extraction_prompt, target_field_id, assessment_type_prompt, assessment_name_prompt, marking_guide_prompt):
     def process():
         try:
             with tempfile.TemporaryDirectory() as temp_dir:
@@ -175,35 +185,15 @@ def process_pdf_async_assessment(pdf_url, record_id, custom_prompt, response_sch
                 file_ref = upload_pdf_to_gemini(pdf_path)
                 extracted_text = extract_text_with_gemini(file_ref, text_extraction_prompt)
 
-                json_content, assessment_type, assessment_name = summarize_content_with_gemini(file_ref, custom_prompt, response_schema)
-                send_to_airtable(record_id, json_content, assessment_type, assessment_name, extracted_text, target_field_id, "Successfully processed by Gemini")
+                json_content, assessment_type, assessment_name, new_marking_guide = summarize_content_with_gemini(
+                    file_ref, custom_prompt, response_schema, assessment_type_prompt, assessment_name_prompt, marking_guide_prompt)
+                send_to_airtable(record_id, json_content, assessment_type, assessment_name, extracted_text, new_marking_guide, target_field_id, "Successfully processed by Gemini")
 
         except Exception as e:
             error_message = f"An error occurred during processing: {str(e)}"
             logger.error(error_message)
             logger.error(traceback.format_exc())
-            send_to_airtable(record_id, "", "", "", "", target_field_id, error_message)
-
-    executor.submit(process)
-
-def process_pdf_async_submission(pdf_url, record_id, custom_prompt, response_schema, text_extraction_prompt, target_field_id):
-    def process():
-        try:
-            with tempfile.TemporaryDirectory() as temp_dir:
-                request_dir = pathlib.Path(temp_dir)
-
-                pdf_path = download_pdf(pdf_url, request_dir)
-                file_ref = upload_pdf_to_gemini(pdf_path)
-                extracted_text = extract_text_with_gemini(file_ref, text_extraction_prompt)
-
-                summary, _, _ = summarize_content_with_gemini(file_ref, custom_prompt, response_schema)
-                send_to_airtable(record_id, summary, "", "", extracted_text, target_field_id, "Successfully processed by Gemini")
-
-        except Exception as e:
-            error_message = f"An error occurred during processing: {str(e)}"
-            logger.error(error_message)
-            logger.error(traceback.format_exc())
-            send_to_airtable(record_id, "", "", "", "", target_field_id, error_message)
+            send_to_airtable(record_id, "", "", "", "", "", target_field_id, error_message)
 
     executor.submit(process)
 
@@ -217,47 +207,18 @@ def process_pdf_assessment_route():
         response_schema = data.get('response_schema')
         text_extraction_prompt = data.get('text_extraction_prompt')
         target_field_id = data.get('targetFieldId')
+        assessment_type_prompt = data.get('assessment_type_prompt')
+        assessment_name_prompt = data.get('assessment_name_prompt')
+        marking_guide_prompt = data.get('marking_guide_prompt')
 
         if isinstance(response_schema, str):
             response_schema = json.loads(response_schema)
 
         if pdf_url and record_id and response_schema and text_extraction_prompt and target_field_id:
-            process_pdf_async_assessment(pdf_url, record_id, custom_prompt, response_schema, text_extraction_prompt, target_field_id)
+            process_pdf_async_assessment(pdf_url, record_id, custom_prompt, response_schema, text_extraction_prompt, target_field_id, assessment_type_prompt, assessment_name_prompt, marking_guide_prompt)
             return jsonify({"status": "processing started"}), 200
         else:
-            missing_fields = [field for field in ['pdf_url', 'record_id', 'response_schema', 'text_extraction_prompt', 'targetFieldId'] if not locals().get(field)]
-            error_message = f"Missing required fields: {', '.join(missing_fields)}"
-            logger.error(error_message)
-            return jsonify({"error": error_message}), 400
-    except json.JSONDecodeError as e:
-        error_message = f"Invalid JSON format in request body or response_schema: {str(e)}"
-        logger.error(error_message)
-        return jsonify({"error": error_message}), 400
-    except Exception as e:
-        error_message = f"An unexpected error occurred: {str(e)}"
-        logger.error(error_message)
-        logger.error(traceback.format_exc())
-        return jsonify({"error": error_message}), 500
-
-@app.route('/process_pdf/submission', methods=['POST'])
-def process_pdf_submission_route():
-    try:
-        data = request.json
-        pdf_url = data.get('pdf_url')
-        record_id = data.get('record_id')
-        custom_prompt = data.get('custom_prompt')
-        response_schema = data.get('response_schema')
-        text_extraction_prompt = data.get('text_extraction_prompt')
-        target_field_id = data.get('targetFieldId')
-
-        if isinstance(response_schema, str):
-            response_schema = json.loads(response_schema)
-
-        if pdf_url and record_id and response_schema and text_extraction_prompt and target_field_id:
-            process_pdf_async_submission(pdf_url, record_id, custom_prompt, response_schema, text_extraction_prompt, target_field_id)
-            return jsonify({"status": "processing started"}), 200
-        else:
-            missing_fields = [field for field in ['pdf_url', 'record_id', 'response_schema', 'text_extraction_prompt', 'targetFieldId'] if not locals().get(field)]
+            missing_fields = [field for field in ['pdf_url', 'record_id', 'response_schema', 'text_extraction_prompt', 'targetFieldId', 'assessment_type_prompt', 'assessment_name_prompt', 'marking_guide_prompt'] if not locals().get(field)]
             error_message = f"Missing required fields: {', '.join(missing_fields)}"
             logger.error(error_message)
             return jsonify({"error": error_message}), 400
