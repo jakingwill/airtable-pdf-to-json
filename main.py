@@ -105,11 +105,17 @@ def summarize_content_with_gemini(file_ref, custom_prompt, response_schema, asse
     try:
         model = genai.GenerativeModel(model_name='gemini-1.5-flash')
 
-        json_prompt = f"{custom_prompt}\n\nPlease extract the information according to the following schema:\n\n{json.dumps(response_schema, indent=2)}"
-
-        # Generate marking guide
+        # Generate the marking guide first
         marking_guide = generate_marking_guide_with_gemini(file_ref, marking_guide_prompt)
 
+        if not marking_guide:
+            logger.warning("No marking guide generated.")
+            return "", "", "", ""
+
+        # Use the generated marking guide as part of the custom prompt for JSON extraction
+        json_prompt = f"{custom_prompt}\n\nUse the following marking guide to extract the information according to the schema:\n\n{marking_guide}\n\nSchema:\n{json.dumps(response_schema, indent=2)}"
+
+        # Generate JSON content using the marking guide as input
         json_response = model.generate_content([file_ref, json_prompt])
         type_response = model.generate_content([file_ref, assessment_type_prompt])
         name_response = model.generate_content([file_ref, assessment_name_prompt])
@@ -122,15 +128,17 @@ def summarize_content_with_gemini(file_ref, custom_prompt, response_schema, asse
             logger.warning("No JSON content extracted.")
             json_content = ""
 
-        if type_response.candidates and "Essay" in type_response.candidates[0].content.parts[0].text:
+        # Determine the assessment type
+        if type_response.candidates and type_response.candidates[0].content.parts and "Essay" in type_response.candidates[0].content.parts[0].text:
             assessment_type = "Essay"
-        elif type_response.candidates and "Exam style" in type_response.candidates[0].content.parts[0].text:
+        elif type_response.candidates and type_response.candidates[0].content.parts and "Exam style" in type_response.candidates[0].content.parts[0].text:
             assessment_type = "Exam style"
         else:
             assessment_type = "Exam style"
 
         logger.info(f"Determined assessment type: {assessment_type}")
 
+        # Determine the assessment name
         if name_response.candidates and name_response.candidates[0].content.parts:
             assessment_name = name_response.candidates[0].content.parts[0].text.strip()
             logger.info(f"Generated assessment name: {assessment_name}")
