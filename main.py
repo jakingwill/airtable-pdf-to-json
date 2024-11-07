@@ -86,58 +86,19 @@ def validate_and_repair_json(json_content):
             logger.error(f"Context around error: {json_content[max(0, e.pos - 40):e.pos + 40]}")
             return ""
 
-def summarize_content_with_gemini(file_ref, custom_prompt, response_schema, assessment_type_prompt, assessment_name_prompt, marking_guide_prompt):
+def generate_marking_guide_with_gemini(file_ref, marking_guide_prompt):
     try:
         model = genai.GenerativeModel(model_name='gemini-1.5-flash')
-
-        # Validate prompts before using them
-        if not all(isinstance(prompt, str) and prompt for prompt in [custom_prompt, assessment_type_prompt, assessment_name_prompt, marking_guide_prompt]):
-            logger.error("One or more prompts are invalid or None.")
-            return None, None, None, None
-
-        json_prompt = f"{custom_prompt}\n\nPlease extract the information according to the following schema:\n\n{json.dumps(response_schema, indent=2)}"
-        
-        # Generate marking guide
-        marking_guide = generate_marking_guide_with_gemini(file_ref, marking_guide_prompt)
-
-        # Proceed only if file_ref is valid
-        if not file_ref:
-            logger.error("file_ref is None, aborting content generation.")
-            return None, None, None, None
-
-        json_response = model.generate_content([file_ref, json_prompt])
-        type_response = model.generate_content([file_ref, assessment_type_prompt])
-        name_response = model.generate_content([file_ref, assessment_name_prompt])
-
-        # Process JSON content
-        if json_response.candidates and json_response.candidates[0].content.parts:
-            raw_json_content = json_response.candidates[0].content.parts[0].text
-            json_content = validate_and_repair_json(raw_json_content)
-            logger.info(f"Validated and repaired JSON content: {json_content}")
+        response = model.generate_content([file_ref, marking_guide_prompt])
+        if response.candidates and response.candidates[0].content.parts:
+            marking_guide = response.candidates[0].content.parts[0].text.strip()
+            logger.info(f"Generated marking guide: {marking_guide}")
+            return marking_guide
         else:
-            logger.warning("No JSON content extracted.")
-            json_content = ""
-
-        # Process assessment type
-        if type_response.candidates and type_response.candidates[0].content.parts:
-            type_text = type_response.candidates[0].content.parts[0].text.strip()
-            assessment_type = "Essay" if "Essay" in type_text else "Exam style"
-        else:
-            assessment_type = "Exam style"
-
-        logger.info(f"Determined assessment type: {assessment_type}")
-
-        # Process assessment name
-        if name_response.candidates and name_response.candidates[0].content.parts:
-            assessment_name = name_response.candidates[0].content.parts[0].text.strip()
-            logger.info(f"Generated assessment name: {assessment_name}")
-        else:
-            assessment_name = "Unknown"
-
-        return json_content, assessment_type, assessment_name, marking_guide
-
+            logger.warning("No marking guide generated.")
+            return ""
     except Exception as e:
-        logger.error(f"Error in summarize_content_with_gemini: {str(e)}")
+        logger.error(f"Error generating marking guide: {str(e)}")
         raise
 
 def summarize_content_with_gemini(file_ref, custom_prompt, response_schema, assessment_type_prompt, assessment_name_prompt, marking_guide_prompt):
