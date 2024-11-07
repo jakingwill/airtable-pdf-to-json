@@ -185,6 +185,28 @@ def process_pdf_async_assessment(pdf_url, record_id, custom_prompt, response_sch
 
     executor.submit(process)
 
+def process_pdf_async_submission(pdf_url, record_id, custom_prompt, response_schema, text_extraction_prompt, target_field_id):
+    def process():
+        try:
+            with tempfile.TemporaryDirectory() as temp_dir:
+                request_dir = pathlib.Path(temp_dir)
+
+                pdf_path = download_pdf(pdf_url, request_dir)
+                file_ref = upload_pdf_to_gemini(pdf_path)
+                extracted_text = extract_text_with_gemini(file_ref, text_extraction_prompt)
+
+                json_content, _, _, _ = summarize_content_with_gemini(
+                    file_ref, custom_prompt, response_schema, "", "", "")
+                send_to_airtable(record_id, json_content, "", "", extracted_text, "", target_field_id, "Successfully processed submission by Gemini")
+
+        except Exception as e:
+            error_message = f"An error occurred during submission processing: {str(e)}"
+            logger.error(error_message)
+            logger.error(traceback.format_exc())
+            send_to_airtable(record_id, "", "", "", "", "", target_field_id, error_message)
+
+    executor.submit(process)
+
 @app.route('/process_pdf/assessment', methods=['POST'])
 def process_pdf_assessment_route():
     try:
@@ -207,6 +229,38 @@ def process_pdf_assessment_route():
             return jsonify({"status": "processing started"}), 200
         else:
             missing_fields = [field for field in ['pdf_url', 'record_id', 'response_schema', 'text_extraction_prompt', 'targetFieldId', 'assessment_type_prompt', 'assessment_name_prompt', 'marking_guide_prompt'] if not locals().get(field)]
+            error_message = f"Missing required fields: {', '.join(missing_fields)}"
+            logger.error(error_message)
+            return jsonify({"error": error_message}), 400
+    except json.JSONDecodeError as e:
+        error_message = f"Invalid JSON format in request body or response_schema: {str(e)}"
+        logger.error(error_message)
+        return jsonify({"error": error_message}), 400
+    except Exception as e:
+        error_message = f"An unexpected error occurred: {str(e)}"
+        logger.error(error_message)
+        logger.error(traceback.format_exc())
+        return jsonify({"error": error_message}), 500
+
+@app.route('/process_pdf/submission', methods=['POST'])
+def process_pdf_submission_route():
+    try:
+        data = request.json
+        pdf_url = data.get('pdf_url')
+        record_id = data.get('record_id')
+        custom_prompt = data.get('custom_prompt')
+        response_schema = data.get('response_schema')
+        text_extraction_prompt = data.get('text_extraction_prompt')
+        target_field_id = data.get('targetFieldId')
+
+        if isinstance(response_schema, str):
+            response_schema = json.loads(response_schema)
+
+        if pdf_url and record_id and response_schema and text_extraction_prompt and target_field_id:
+            process_pdf_async_submission(pdf_url, record_id, custom_prompt, response_schema, text_extraction_prompt, target_field_id)
+            return jsonify({"status": "submission processing started"}), 200
+        else:
+            missing_fields = [field for field in ['pdf_url', 'record_id', 'response_schema', 'text_extraction_prompt', 'targetFieldId'] if not locals().get(field)]
             error_message = f"Missing required fields: {', '.join(missing_fields)}"
             logger.error(error_message)
             return jsonify({"error": error_message}), 400
