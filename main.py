@@ -115,10 +115,15 @@ def summarize_content_with_gemini(file_ref, custom_prompt, response_schema, asse
         # Use the generated marking guide as part of the custom prompt for JSON extraction
         json_prompt = f"{custom_prompt}\n\nUse the following marking guide to extract the information according to the schema:\n\n{marking_guide}\n\nSchema:\n{json.dumps(response_schema, indent=2)}"
 
+        # Set up generation configuration including temperature
+        generation_config = {
+            "temperature": temperature
+        }
+
         # Generate JSON content using the marking guide as input
-        json_response = model.generate_content([file_ref, json_prompt], temperature=temperature)
-        type_response = model.generate_content([file_ref, assessment_type_prompt], temperature=temperature)
-        name_response = model.generate_content([file_ref, assessment_name_prompt], temperature=temperature)
+        json_response = model.generate_content([file_ref, json_prompt], generationConfig=generation_config)
+        type_response = model.generate_content([file_ref, assessment_type_prompt], generationConfig=generation_config)
+        name_response = model.generate_content([file_ref, assessment_name_prompt], generationConfig=generation_config)
 
         if json_response.candidates and json_response.candidates[0].content.parts:
             raw_json_content = json_response.candidates[0].content.parts[0].text
