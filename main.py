@@ -53,11 +53,11 @@ def upload_pdf_to_gemini(pdf_path):
         logger.error(f"Error uploading PDF to Gemini: {str(e)}")
         raise
 
-def extract_text_with_gemini(file_ref, text_extraction_prompt):
+def extract_text_with_gemini(file_ref, text_extraction_prompt, temperature=0):
     try:
         model = genai.GenerativeModel(model_name='gemini-1.5-flash')
-
-        response = model.generate_content([file_ref, text_extraction_prompt])
+        generation_config = genai.types.GenerationConfig(temperature=temperature)
+        response = model.generate_content([file_ref, text_extraction_prompt], generation_config=generation_config)
         logger.info(f"Response from Gemini: {response}")
 
         if response.candidates and response.candidates[0].content.parts:
@@ -86,10 +86,11 @@ def validate_and_repair_json(json_content):
             logger.error(f"Context around error: {json_content[max(0, e.pos - 40):e.pos + 40]}")
             return ""
 
-def generate_marking_guide_with_gemini(file_ref, marking_guide_prompt):
+def generate_marking_guide_with_gemini(file_ref, marking_guide_prompt, temperature=0):
     try:
         model = genai.GenerativeModel(model_name='gemini-1.5-flash')
-        response = model.generate_content([file_ref, marking_guide_prompt])
+        generation_config = genai.types.GenerationConfig(temperature=temperature)
+        response = model.generate_content([file_ref, marking_guide_prompt], generation_config=generation_config)
         if response.candidates and response.candidates[0].content.parts:
             marking_guide = response.candidates[0].content.parts[0].text.strip()
             logger.info(f"Generated marking guide: {marking_guide}")
@@ -101,12 +102,13 @@ def generate_marking_guide_with_gemini(file_ref, marking_guide_prompt):
         logger.error(f"Error generating marking guide: {str(e)}")
         raise
 
-def summarize_content_with_gemini(file_ref, custom_prompt, response_schema, assessment_type_prompt, assessment_name_prompt, marking_guide_prompt, temperature):
+def summarize_content_with_gemini(file_ref, custom_prompt, response_schema, assessment_type_prompt, assessment_name_prompt, marking_guide_prompt, temperature=0):
     try:
         model = genai.GenerativeModel(model_name='gemini-1.5-flash')
+        generation_config = genai.types.GenerationConfig(temperature=temperature)
 
         # Generate the marking guide first
-        marking_guide = generate_marking_guide_with_gemini(file_ref, marking_guide_prompt)
+        marking_guide = generate_marking_guide_with_gemini(file_ref, marking_guide_prompt, temperature)
 
         if not marking_guide:
             logger.warning("No marking guide generated.")
@@ -115,15 +117,10 @@ def summarize_content_with_gemini(file_ref, custom_prompt, response_schema, asse
         # Use the generated marking guide as part of the custom prompt for JSON extraction
         json_prompt = f"{custom_prompt}\n\nUse the following marking guide to extract the information according to the schema:\n\n{marking_guide}\n\nSchema:\n{json.dumps(response_schema, indent=2)}"
 
-        # Set up generation configuration including temperature
-        generation_config = {
-            "temperature": temperature
-        }
-
         # Generate JSON content using the marking guide as input
-        json_response = model.generate_content([file_ref, json_prompt], generationConfig=generation_config)
-        type_response = model.generate_content([file_ref, assessment_type_prompt], generationConfig=generation_config)
-        name_response = model.generate_content([file_ref, assessment_name_prompt], generationConfig=generation_config)
+        json_response = model.generate_content([file_ref, json_prompt], generation_config=generation_config)
+        type_response = model.generate_content([file_ref, assessment_type_prompt], generation_config=generation_config)
+        name_response = model.generate_content([file_ref, assessment_name_prompt], generation_config=generation_config)
 
         if json_response.candidates and json_response.candidates[0].content.parts:
             raw_json_content = json_response.candidates[0].content.parts[0].text
@@ -176,7 +173,7 @@ def send_to_airtable(record_id, json_content, assessment_type, assessment_name, 
         logger.error(f"Error sending data to Airtable: {str(e)}")
         raise
 
-def process_pdf_async_assessment(pdf_url, record_id, custom_prompt, response_schema, text_extraction_prompt, target_field_id, assessment_type_prompt, assessment_name_prompt, marking_guide_prompt, temperature):
+def process_pdf_async_assessment(pdf_url, record_id, custom_prompt, response_schema, text_extraction_prompt, target_field_id, assessment_type_prompt, assessment_name_prompt, marking_guide_prompt, temperature=0):
     def process():
         try:
             with tempfile.TemporaryDirectory() as temp_dir:
@@ -184,7 +181,7 @@ def process_pdf_async_assessment(pdf_url, record_id, custom_prompt, response_sch
 
                 pdf_path = download_pdf(pdf_url, request_dir)
                 file_ref = upload_pdf_to_gemini(pdf_path)
-                extracted_text = extract_text_with_gemini(file_ref, text_extraction_prompt)
+                extracted_text = extract_text_with_gemini(file_ref, text_extraction_prompt, temperature)
 
                 json_content, assessment_type, assessment_name, new_marking_guide = summarize_content_with_gemini(
                     file_ref, custom_prompt, response_schema, assessment_type_prompt, assessment_name_prompt, marking_guide_prompt, temperature)
@@ -198,7 +195,7 @@ def process_pdf_async_assessment(pdf_url, record_id, custom_prompt, response_sch
 
     executor.submit(process)
 
-def process_pdf_async_submission(pdf_url, record_id, custom_prompt, response_schema, text_extraction_prompt, target_field_id, temperature):
+def process_pdf_async_submission(pdf_url, record_id, custom_prompt, response_schema, text_extraction_prompt, target_field_id, temperature=0):
     def process():
         try:
             with tempfile.TemporaryDirectory() as temp_dir:
@@ -206,7 +203,7 @@ def process_pdf_async_submission(pdf_url, record_id, custom_prompt, response_sch
 
                 pdf_path = download_pdf(pdf_url, request_dir)
                 file_ref = upload_pdf_to_gemini(pdf_path)
-                extracted_text = extract_text_with_gemini(file_ref, text_extraction_prompt)
+                extracted_text = extract_text_with_gemini(file_ref, text_extraction_prompt, temperature)
 
                 json_content, _, _, _ = summarize_content_with_gemini(
                     file_ref, custom_prompt, response_schema, "", "", "", temperature)
@@ -233,7 +230,7 @@ def process_pdf_assessment_route():
         assessment_type_prompt = data.get('assessment_type_prompt')
         assessment_name_prompt = data.get('assessment_name_prompt')
         marking_guide_prompt = data.get('marking_guide_prompt')
-        temperature = data.get('temperature', 0)  # Default to 0 if not sent
+        temperature = data.get('temperature', 0)  # Default to 0 if not provided
 
         if isinstance(response_schema, str):
             response_schema = json.loads(response_schema)
@@ -266,7 +263,7 @@ def process_pdf_submission_route():
         response_schema = data.get('response_schema')
         text_extraction_prompt = data.get('text_extraction_prompt')
         target_field_id = data.get('targetFieldId')
-        temperature = data.get('temperature', 0)  # Default to 0 if not sent
+        temperature = data.get('temperature', 0)  # Default to 0 if not provided
 
         if isinstance(response_schema, str):
             response_schema = json.loads(response_schema)
