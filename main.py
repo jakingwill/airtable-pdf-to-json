@@ -228,12 +228,13 @@ def process_pdf_assessment_route():
         assessment_type_prompt = data.get('assessment_type_prompt')
         assessment_name_prompt = data.get('assessment_name_prompt')
         marking_guide_prompt = data.get('marking_guide_prompt')
+        temperature = data.get('temperature', 0)  # Default to 0 if not sent
 
         if isinstance(response_schema, str):
             response_schema = json.loads(response_schema)
 
         if pdf_url and record_id and response_schema and text_extraction_prompt and target_field_id:
-            process_pdf_async_assessment(pdf_url, record_id, custom_prompt, response_schema, text_extraction_prompt, target_field_id, assessment_type_prompt, assessment_name_prompt, marking_guide_prompt)
+            process_pdf_async_assessment(pdf_url, record_id, custom_prompt, response_schema, text_extraction_prompt, target_field_id, assessment_type_prompt, assessment_name_prompt, marking_guide_prompt, temperature)
             return jsonify({"status": "processing started"}), 200
         else:
             missing_fields = [field for field in ['pdf_url', 'record_id', 'response_schema', 'text_extraction_prompt', 'targetFieldId', 'assessment_type_prompt', 'assessment_name_prompt', 'marking_guide_prompt'] if not locals().get(field)]
@@ -260,12 +261,13 @@ def process_pdf_submission_route():
         response_schema = data.get('response_schema')
         text_extraction_prompt = data.get('text_extraction_prompt')
         target_field_id = data.get('targetFieldId')
+        temperature = data.get('temperature', 0)  # Default to 0 if not sent
 
         if isinstance(response_schema, str):
             response_schema = json.loads(response_schema)
 
         if pdf_url and record_id and response_schema and text_extraction_prompt and target_field_id:
-            process_pdf_async_submission(pdf_url, record_id, custom_prompt, response_schema, text_extraction_prompt, target_field_id)
+            process_pdf_async_submission(pdf_url, record_id, custom_prompt, response_schema, text_extraction_prompt, target_field_id, temperature)
             return jsonify({"status": "submission processing started"}), 200
         else:
             missing_fields = [field for field in ['pdf_url', 'record_id', 'response_schema', 'text_extraction_prompt', 'targetFieldId'] if not locals().get(field)]
