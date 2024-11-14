@@ -182,7 +182,7 @@ def process_pdf_async_assessment(pdf_url, record_id, custom_prompt, response_sch
                 extracted_text = extract_text_with_gemini(file_ref, text_extraction_prompt)
 
                 json_content, assessment_type, assessment_name, new_marking_guide = summarize_content_with_gemini(
-                    file_ref, custom_prompt, response_schema, assessment_type_prompt, assessment_name_prompt, marking_guide_prompt)
+                    file_ref, custom_prompt, response_schema, assessment_type_prompt, assessment_name_prompt, marking_guide_prompt, temperature)
                 send_to_airtable(record_id, json_content, assessment_type, assessment_name, extracted_text, new_marking_guide, target_field_id, "Successfully processed by Gemini")
 
         except Exception as e:
