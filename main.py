@@ -101,7 +101,7 @@ def generate_marking_guide_with_gemini(file_ref, marking_guide_prompt):
         logger.error(f"Error generating marking guide: {str(e)}")
         raise
 
-def summarize_content_with_gemini(file_ref, custom_prompt, response_schema, assessment_type_prompt, assessment_name_prompt, marking_guide_prompt):
+def summarize_content_with_gemini(file_ref, custom_prompt, response_schema, assessment_type_prompt, assessment_name_prompt, marking_guide_prompt, temperature):
     try:
         model = genai.GenerativeModel(model_name='gemini-1.5-flash')
 
@@ -116,9 +116,9 @@ def summarize_content_with_gemini(file_ref, custom_prompt, response_schema, asse
         json_prompt = f"{custom_prompt}\n\nUse the following marking guide to extract the information according to the schema:\n\n{marking_guide}\n\nSchema:\n{json.dumps(response_schema, indent=2)}"
 
         # Generate JSON content using the marking guide as input
-        json_response = model.generate_content([file_ref, json_prompt])
-        type_response = model.generate_content([file_ref, assessment_type_prompt])
-        name_response = model.generate_content([file_ref, assessment_name_prompt])
+        json_response = model.generate_content([file_ref, json_prompt], temperature=temperature)
+        type_response = model.generate_content([file_ref, assessment_type_prompt], temperature=temperature)
+        name_response = model.generate_content([file_ref, assessment_name_prompt], temperature=temperature)
 
         if json_response.candidates and json_response.candidates[0].content.parts:
             raw_json_content = json_response.candidates[0].content.parts[0].text
