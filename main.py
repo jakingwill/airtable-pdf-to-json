@@ -171,7 +171,7 @@ def send_to_airtable(record_id, json_content, assessment_type, assessment_name, 
         logger.error(f"Error sending data to Airtable: {str(e)}")
         raise
 
-def process_pdf_async_assessment(pdf_url, record_id, custom_prompt, response_schema, text_extraction_prompt, target_field_id, assessment_type_prompt, assessment_name_prompt, marking_guide_prompt):
+def process_pdf_async_assessment(pdf_url, record_id, custom_prompt, response_schema, text_extraction_prompt, target_field_id, assessment_type_prompt, assessment_name_prompt, marking_guide_prompt, temperature):
     def process():
         try:
             with tempfile.TemporaryDirectory() as temp_dir:
@@ -193,7 +193,7 @@ def process_pdf_async_assessment(pdf_url, record_id, custom_prompt, response_sch
 
     executor.submit(process)
 
-def process_pdf_async_submission(pdf_url, record_id, custom_prompt, response_schema, text_extraction_prompt, target_field_id):
+def process_pdf_async_submission(pdf_url, record_id, custom_prompt, response_schema, text_extraction_prompt, target_field_id, temperature):
     def process():
         try:
             with tempfile.TemporaryDirectory() as temp_dir:
@@ -204,7 +204,7 @@ def process_pdf_async_submission(pdf_url, record_id, custom_prompt, response_sch
                 extracted_text = extract_text_with_gemini(file_ref, text_extraction_prompt)
 
                 json_content, _, _, _ = summarize_content_with_gemini(
-                    file_ref, custom_prompt, response_schema, "", "", "")
+                    file_ref, custom_prompt, response_schema, "", "", "", temperature)
                 send_to_airtable(record_id, json_content, "", "", extracted_text, "", target_field_id, "Successfully processed submission by Gemini")
 
         except Exception as e:
