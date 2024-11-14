@@ -56,6 +56,8 @@ def upload_pdf_to_gemini(pdf_path):
 def extract_text_with_gemini(file_ref, text_extraction_prompt, temperature=0):
     try:
         model = genai.GenerativeModel(model_name='gemini-1.5-flash')
+        # Convert temperature to float
+        temperature = float(temperature)
         generation_config = genai.types.GenerationConfig(temperature=temperature)
         response = model.generate_content([file_ref, text_extraction_prompt], generation_config=generation_config)
         logger.info(f"Response from Gemini: {response}")
@@ -89,6 +91,8 @@ def validate_and_repair_json(json_content):
 def generate_marking_guide_with_gemini(file_ref, marking_guide_prompt, temperature=0):
     try:
         model = genai.GenerativeModel(model_name='gemini-1.5-flash')
+        # Convert temperature to float
+        temperature = float(temperature)
         generation_config = genai.types.GenerationConfig(temperature=temperature)
         response = model.generate_content([file_ref, marking_guide_prompt], generation_config=generation_config)
         if response.candidates and response.candidates[0].content.parts:
@@ -105,6 +109,8 @@ def generate_marking_guide_with_gemini(file_ref, marking_guide_prompt, temperatu
 def summarize_content_with_gemini(file_ref, custom_prompt, response_schema, assessment_type_prompt, assessment_name_prompt, marking_guide_prompt, temperature=0):
     try:
         model = genai.GenerativeModel(model_name='gemini-1.5-flash')
+        # Convert temperature to float
+        temperature = float(temperature)
         generation_config = genai.types.GenerationConfig(temperature=temperature)
 
         # Generate the marking guide first
