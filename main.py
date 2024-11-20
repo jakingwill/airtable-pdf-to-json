@@ -207,13 +207,36 @@ def process_pdf_async_submission(pdf_url, record_id, custom_prompt, response_sch
             with tempfile.TemporaryDirectory() as temp_dir:
                 request_dir = pathlib.Path(temp_dir)
 
+                # Step 1: Download the PDF
                 pdf_path = download_pdf(pdf_url, request_dir)
-                file_ref = upload_pdf_to_gemini(pdf_path)
-                extracted_text = extract_text_with_gemini(file_ref, text_extraction_prompt, temperature)
 
+                # Step 2: Upload the PDF to Gemini
+                file_ref = upload_pdf_to_gemini(pdf_path)
+
+                # Step 3: Extract text using the text extraction prompt
+                extracted_text = extract_text_with_gemini(file_ref, text_extraction_prompt, temperature)
+                
+                if not extracted_text:
+                    raise ValueError("No text extracted from the PDF. Cannot proceed with JSON generation.")
+
+                # Step 4: Use the extracted text to create the custom prompt
+                updated_custom_prompt = f"{custom_prompt}\n\nExtracted Text:\n{extracted_text}\n\nSchema:\n{json.dumps(response_schema, indent=2)}"
+
+                # Step 5: Generate JSON content using the updated custom prompt
                 json_content, _, _, _ = summarize_content_with_gemini(
-                    file_ref, custom_prompt, response_schema, "", "", "", temperature)
-                send_to_airtable(record_id, json_content, "", "", extracted_text, "", target_field_id, "Successfully processed submission by Gemini")
+                    file_ref, updated_custom_prompt, response_schema, "", "", "", temperature)
+
+                # Step 6: Send the result to Airtable
+                send_to_airtable(
+                    record_id,
+                    json_content,
+                    "",
+                    "",
+                    extracted_text,
+                    "",
+                    target_field_id,
+                    "Successfully processed submission by Gemini"
+                )
 
         except Exception as e:
             error_message = f"An error occurred during submission processing: {str(e)}"
