@@ -185,10 +185,6 @@ def summarize_content_with_gemini(file_ref, custom_prompt, response_schema, asse
 
 def send_to_airtable(record_id, json_content, assessment_type, assessment_name, extracted_text, new_marking_guide, target_field_id, status_message):
     try:
-        # Truncate the extracted text if necessary
-        max_payload_size_kb = 100  # Airtable's payload size limit in KB
-        max_text_length = 20000  # Start with a reasonable limit for extracted text
-
         data = {
             "record_id": record_id,
             "json_content": json_content,
@@ -200,26 +196,7 @@ def send_to_airtable(record_id, json_content, assessment_type, assessment_name, 
             "target_field_id": target_field_id
         }
 
-        # Convert data to JSON to calculate size
-        payload = json.dumps(data)
-        payload_size_kb = len(payload.encode('utf-8')) / 1024  # Convert bytes to KB
-        logger.info(f"Payload size: {payload_size_kb:.2f} KB")
-
-        # Check if payload exceeds the limit
-        if payload_size_kb > max_payload_size_kb:
-            logger.warning("Payload exceeds Airtable's 100KB limit. Truncating extracted text.")
-            # Reduce the size of the extracted text
-            available_size_kb = max_payload_size_kb - (payload_size_kb - len(extracted_text.encode('utf-8')) / 1024)
-            max_extracted_text_length = int(len(extracted_text) * (available_size_kb / payload_size_kb))
-            extracted_text = extracted_text[:max_extracted_text_length]
-            data["extracted_text"] = extracted_text
-
-            # Recalculate payload size
-            payload = json.dumps(data)
-            payload_size_kb = len(payload.encode('utf-8')) / 1024
-            logger.info(f"New payload size after truncation: {payload_size_kb:.2f} KB")
-
-        # Send the data
+        logger.info(f"Sending data to Airtable for record: {record_id}")
         response = requests.post(airtable_webhook_url, json=data)
         response.raise_for_status()
         logger.info("Successfully sent data to Airtable")
