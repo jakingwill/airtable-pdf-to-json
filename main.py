@@ -137,59 +137,51 @@ def generate_marking_guide_with_gemini(file_ref, marking_guide_prompt, temperatu
         logger.error(f"Error generating marking guide: {str(e)}")
         raise
 
-def summarize_content_with_gemini(file_ref, custom_prompt, response_schema, assessment_type_prompt, assessment_name_prompt, marking_guide_prompt, temperature=0):
+def summarize_content_with_gemini(file_ref, custom_prompt, response_schema, assessment_type_prompt=None, assessment_name_prompt=None, marking_guide_prompt=None, temperature=0):
     try:
         model = genai.GenerativeModel(model_name='gemini-1.5-flash')
-        # Convert temperature to float
         temperature = float(temperature)
         generation_config = genai.types.GenerationConfig(temperature=temperature)
 
-        # Generate the marking guide first
-        marking_guide = generate_marking_guide_with_gemini(file_ref, marking_guide_prompt, temperature)
+        # Optional: Generate the marking guide if prompt is provided
+        marking_guide = ""
+        if marking_guide_prompt:
+            marking_guide = generate_marking_guide_with_gemini(file_ref, marking_guide_prompt, temperature)
+            if not marking_guide:
+                logger.warning("No marking guide generated.")
+        
+        # Prepare the custom prompt for JSON extraction
+        json_prompt = f"{custom_prompt}\n\nSchema:\n{json.dumps(response_schema, indent=2)}"
+        if marking_guide:
+            json_prompt += f"\n\nUse the following marking guide:\n\n{marking_guide}"
 
-        if not marking_guide:
-            logger.warning("No marking guide generated.")
-            return "", "", "", ""
-
-        # Use the generated marking guide as part of the custom prompt for JSON extraction
-        json_prompt = f"{custom_prompt}\n\nUse the following marking guide to extract the information according to the schema:\n\n{marking_guide}\n\nSchema:\n{json.dumps(response_schema, indent=2)}"
-
-        # Generate JSON content using the marking guide as input
+        # Generate JSON content
         json_response = model.generate_content([file_ref, json_prompt], generation_config=generation_config)
-        type_response = model.generate_content([file_ref, assessment_type_prompt], generation_config=generation_config)
-        name_response = model.generate_content([file_ref, assessment_name_prompt], generation_config=generation_config)
-
         if json_response.candidates and json_response.candidates[0].content.parts:
             raw_json_content = json_response.candidates[0].content.parts[0].text
             json_content = validate_and_repair_json(raw_json_content)
             logger.info(f"Validated and repaired JSON content: {json_content}")
         else:
-            logger.warning("No JSON content extracted.")
             json_content = ""
 
-        # Determine the assessment type
-        if type_response.candidates and type_response.candidates[0].content.parts and "Essay" in type_response.candidates[0].content.parts[0].text:
-            assessment_type = "Essay"
-        elif type_response.candidates and type_response.candidates[0].content.parts and "Exam style" in type_response.candidates[0].content.parts[0].text:
-            assessment_type = "Exam style"
-        else:
-            assessment_type = "Exam style"
-
-        logger.info(f"Determined assessment type: {assessment_type}")
-
-        # Determine the assessment name
-        if name_response.candidates and name_response.candidates[0].content.parts:
-            assessment_name = name_response.candidates[0].content.parts[0].text.strip()
-            logger.info(f"Generated assessment name: {assessment_name}")
-        else:
-            assessment_name = "Unknown"
+        # Optional: Generate assessment type and name if prompts are provided
+        assessment_type = ""
+        assessment_name = ""
+        if assessment_type_prompt:
+            type_response = model.generate_content([file_ref, assessment_type_prompt], generation_config=generation_config)
+            if type_response.candidates and type_response.candidates[0].content.parts:
+                assessment_type = type_response.candidates[0].content.parts[0].text.strip()
+        
+        if assessment_name_prompt:
+            name_response = model.generate_content([file_ref, assessment_name_prompt], generation_config=generation_config)
+            if name_response.candidates and name_response.candidates[0].content.parts:
+                assessment_name = name_response.candidates[0].content.parts[0].text.strip()
 
         return json_content, assessment_type, assessment_name, marking_guide
 
     except Exception as e:
         logger.error(f"Error in summarize_content_with_gemini: {str(e)}")
         raise
-
 
 def send_to_airtable(record_id, json_content, assessment_type, assessment_name, extracted_text, new_marking_guide, target_field_id, status_message):
     try:
@@ -215,60 +207,30 @@ def send_to_airtable(record_id, json_content, assessment_type, assessment_name, 
 def process_pdf_async_submission(pdf_url, record_id, custom_prompt, response_schema, text_extraction_prompt, target_field_id, temperature=0):
     def process():
         try:
-            # Log incoming parameters
-            logger.info(f"""
-Processing submission with parameters:
-PDF URL: {pdf_url}
-Record ID: {record_id}
-Custom Prompt Length: {len(custom_prompt) if custom_prompt else 0}
-Text Extraction Prompt Length: {len(text_extraction_prompt) if text_extraction_prompt else 0}
-Temperature: {temperature}
-            """)
-
-            # Validate prompts
-            if not custom_prompt or not custom_prompt.strip():
-                raise ValueError("Custom prompt is empty or contains only whitespace")
-            if not text_extraction_prompt or not text_extraction_prompt.strip():
-                raise ValueError("Text extraction prompt is empty or contains only whitespace")
+            logger.info(f"Processing submission with parameters: PDF URL: {pdf_url}, Record ID: {record_id}")
 
             with tempfile.TemporaryDirectory() as temp_dir:
-                request_dir = pathlib.Path(temp_dir)
-
-                # Download and process PDF
-                pdf_path = download_pdf(pdf_url, request_dir)
+                pdf_path = download_pdf(pdf_url, temp_dir)
                 file_ref = upload_pdf_to_gemini(pdf_path)
-                
-                # Extract text
-                logger.info("Attempting text extraction...")
+
                 extracted_text = extract_text_with_gemini(file_ref, text_extraction_prompt, temperature)
-                
                 if not extracted_text:
-                    raise ValueError("No text extracted from the PDF. Cannot proceed with JSON generation.")
+                    raise ValueError("No text extracted from the PDF. Cannot proceed.")
 
-                logger.info(f"Successfully extracted text of length: {len(extracted_text)}")
-
-                # Generate JSON content
-                updated_custom_prompt = f"{custom_prompt}\n\nExtracted Text:\n{extracted_text}\n\nSchema:\n{json.dumps(response_schema, indent=2)}"
-                logger.info("Generating JSON content...")
-                
                 json_content, _, _, _ = summarize_content_with_gemini(
                     file_ref, 
-                    updated_custom_prompt, 
+                    custom_prompt, 
                     response_schema, 
-                    "", 
-                    "", 
-                    "", 
-                    temperature
+                    temperature=temperature
                 )
 
-                # Send results to Airtable
                 send_to_airtable(
                     record_id,
                     json_content,
-                    "",
-                    "",
+                    "",  # No assessment type for submission
+                    "",  # No assessment name for submission
                     extracted_text,
-                    "",
+                    "",  # No marking guide for submission
                     target_field_id,
                     "Successfully processed submission by Gemini"
                 )
