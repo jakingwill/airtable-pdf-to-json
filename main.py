@@ -185,6 +185,7 @@ def summarize_content_with_gemini(file_ref, custom_prompt, response_schema, asse
 
 def send_to_airtable(record_id, json_content, assessment_type, assessment_name, extracted_text, new_marking_guide, target_field_id, status_message):
     try:
+        # Create the payload
         data = {
             "record_id": record_id,
             "json_content": json_content,
@@ -196,10 +197,22 @@ def send_to_airtable(record_id, json_content, assessment_type, assessment_name, 
             "target_field_id": target_field_id
         }
 
+        # Log the size of each field
+        logger.info("Logging field sizes (in bytes):")
+        for key, value in data.items():
+            if isinstance(value, str):  # Calculate size only for strings
+                logger.info(f"  {key}: {len(value.encode('utf-8'))} bytes")
+
+        # Log total payload size
+        payload_size = len(json.dumps(data).encode('utf-8'))
+        logger.info(f"Total payload size: {payload_size} bytes")
+
+        # Send the data to Airtable
         logger.info(f"Sending data to Airtable for record: {record_id}")
         response = requests.post(airtable_webhook_url, json=data)
         response.raise_for_status()
         logger.info("Successfully sent data to Airtable")
+
     except requests.RequestException as e:
         logger.error(f"Error sending data to Airtable: {str(e)}")
         raise
