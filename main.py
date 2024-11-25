@@ -286,5 +286,128 @@ def process_pdf_submission_route():
 
 atexit.register(executor.shutdown)
 
+@app.route('/process_pdf/assessment', methods=['POST'])
+def process_pdf_assessment_route():
+    try:
+        data = request.json
+        logger.info("Received request data for assessment: %s", json.dumps(data, indent=2))
+        
+        # Validate required fields
+        required_fields = ['pdf_url', 'record_id', 'custom_prompt', 'response_schema', 
+                           'text_extraction_prompt', 'targetFieldId', 'assessment_type_prompt', 
+                           'assessment_name_prompt', 'marking_guide_prompt']
+        missing_fields = [field for field in required_fields if not data.get(field)]
+        if missing_fields:
+            error_message = f"Missing required fields: {', '.join(missing_fields)}"
+            logger.error(error_message)
+            return jsonify({"error": error_message}), 400
+        
+        pdf_url = data.get('pdf_url')
+        record_id = data.get('record_id')
+        custom_prompt = data.get('custom_prompt', '').strip()
+        response_schema = data.get('response_schema')
+        text_extraction_prompt = data.get('text_extraction_prompt', '').strip()
+        target_field_id = data.get('targetFieldId')
+        assessment_type_prompt = data.get('assessment_type_prompt', '').strip()
+        assessment_name_prompt = data.get('assessment_name_prompt', '').strip()
+        marking_guide_prompt = data.get('marking_guide_prompt', '').strip()
+        temperature = data.get('temperature', 0)
+
+        # Parse response_schema if provided as string
+        if isinstance(response_schema, str):
+            try:
+                response_schema = json.loads(response_schema)
+            except JSONDecodeError as e:
+                error_message = f"Invalid response_schema JSON: {str(e)}"
+                logger.error(error_message)
+                return jsonify({"error": error_message}), 400
+
+        process_pdf_async_assessment(
+            pdf_url, 
+            record_id, 
+            custom_prompt, 
+            response_schema, 
+            text_extraction_prompt, 
+            target_field_id, 
+            assessment_type_prompt, 
+            assessment_name_prompt, 
+            marking_guide_prompt, 
+            temperature
+        )
+        
+        return jsonify({"status": "assessment processing started"}), 200
+        
+    except json.JSONDecodeError as e:
+        error_message = f"Invalid JSON format in request body: {str(e)}"
+        logger.error(error_message)
+        return jsonify({"error": error_message}), 400
+    except Exception as e:
+        error_message = f"An unexpected error occurred: {str(e)}"
+        logger.error(error_message)
+        logger.error(traceback.format_exc())
+        return jsonify({"error": error_message}), 500
+
+def process_pdf_async_assessment(pdf_url, record_id, custom_prompt, response_schema, text_extraction_prompt, 
+                                  target_field_id, assessment_type_prompt, assessment_name_prompt, 
+                                  marking_guide_prompt, temperature=0):
+    def process():
+        try:
+            logger.info(f"""
+Processing assessment with parameters:
+PDF URL: {pdf_url}
+Record ID: {record_id}
+Custom Prompt Length: {len(custom_prompt) if custom_prompt else 0}
+Text Extraction Prompt Length: {len(text_extraction_prompt) if text_extraction_prompt else 0}
+Temperature: {temperature}
+            """)
+
+            with tempfile.TemporaryDirectory() as temp_dir:
+                request_dir = pathlib.Path(temp_dir)
+
+                # Download and process PDF
+                pdf_path = download_pdf(pdf_url, request_dir)
+                file_ref = upload_pdf_to_gemini(pdf_path)
+                
+                # Extract text
+                logger.info("Attempting text extraction...")
+                extracted_text = extract_text_with_gemini(file_ref, text_extraction_prompt, temperature)
+                
+                if not extracted_text:
+                    raise ValueError("No text extracted from the PDF. Cannot proceed with processing.")
+
+                logger.info(f"Successfully extracted text of length: {len(extracted_text)}")
+
+                # Generate JSON content and additional details
+                json_content, assessment_type, assessment_name, new_marking_guide = summarize_content_with_gemini(
+                    file_ref, 
+                    custom_prompt, 
+                    response_schema, 
+                    assessment_type_prompt, 
+                    assessment_name_prompt, 
+                    marking_guide_prompt, 
+                    temperature
+                )
+
+                # Send results to Airtable
+                send_to_airtable(
+                    record_id,
+                    json_content,
+                    assessment_type,
+                    assessment_name,
+                    extracted_text,
+                    new_marking_guide,
+                    target_field_id,
+                    "Successfully processed assessment by Gemini"
+                )
+
+        except Exception as e:
+            error_message = f"An error occurred during assessment processing: {str(e)}"
+            logger.error(error_message)
+            logger.error(traceback.format_exc())
+            send_to_airtable(record_id, "", "", "", "", "", target_field_id, error_message)
+
+    executor.submit(process)
+
+
 if __name__ == '__main__':
     app.run(debug=True)
