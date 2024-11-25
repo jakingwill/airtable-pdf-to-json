@@ -29,6 +29,24 @@ executor = ThreadPoolExecutor(max_workers=1)
 def log_payload(data):
     logger.info(f"Received Payload: {json.dumps(data, indent=2)}")
 
+def validate_and_repair_json(json_content):
+    """
+    Validates and repairs a JSON string if it is malformed.
+    """
+    try:
+        parsed_json = json.loads(json_content)
+        return json.dumps(parsed_json)
+    except JSONDecodeError as e:
+        logger.warning(f"JSON is malformed; attempting to repair. Error: {str(e)}")
+        try:
+            repaired_json = repair_json(json_content)
+            parsed_json = json.loads(repaired_json)
+            return json.dumps(parsed_json)
+        except JSONDecodeError as repair_error:
+            logger.error(f"Failed to repair JSON: {repair_error}")
+            logger.error(f"Context around error: {json_content[max(0, e.pos - 40):e.pos + 40]}")
+            return ""
+
 def download_pdf(pdf_url, download_folder):
     try:
         download_folder = pathlib.Path(download_folder)
@@ -67,7 +85,7 @@ def extract_text_with_gemini(file_ref, text_extraction_prompt, temperature=0):
 
         if response.candidates and response.candidates[0].content.parts:
             extracted_text = response.candidates[0].content.parts[0].text
-            logger.info(f"Extracted text snippet: {extracted_text[:500]}...")  # Log first 500 characters
+            logger.info(f"Extracted text snippet: {extracted_text[:500]}...")
             return extracted_text
         else:
             logger.warning("No text extracted from the PDF.")
@@ -111,9 +129,9 @@ def process_pdf_async_submission(pdf_url, record_id, custom_prompt, response_sch
                     raise ValueError("No text extracted from the PDF. Cannot proceed with JSON generation.")
 
                 updated_custom_prompt = f"{custom_prompt}\n\nExtracted Text:\n{extracted_text}\n\nSchema:\n{json.dumps(response_schema, indent=2)}"
-                logger.info(f"Updated custom prompt for JSON extraction: {updated_custom_prompt[:500]}...")  # Log first 500 characters
+                logger.info(f"Updated custom prompt for JSON extraction: {updated_custom_prompt[:500]}...")
 
-                json_content = "{}"  # Placeholder if extraction fails
+                json_content = "{}"
                 try:
                     model = genai.GenerativeModel(model_name='gemini-1.5-flash')
                     generation_config = genai.types.GenerationConfig(temperature=float(temperature))
