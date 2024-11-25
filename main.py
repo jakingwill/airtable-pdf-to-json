@@ -9,7 +9,7 @@ import json
 import tempfile
 import logging
 import traceback
-from json_repair import repair_json  # Import json-repair as shown in docs
+from json_repair import repair_json
 from json import JSONDecodeError
 
 # Set up logging
@@ -25,6 +25,34 @@ airtable_webhook_url = os.getenv('AIRTABLE_WEBHOOK', 'http://your-airtable-webho
 
 # Create a thread pool executor for tasks
 executor = ThreadPoolExecutor(max_workers=1)
+
+def validate_request_data(data):
+    """Validate incoming request data and return detailed error messages."""
+    required_fields = {
+        'pdf_url': str,
+        'record_id': str,
+        'custom_prompt': str,
+        'response_schema': (dict, str),
+        'text_extraction_prompt': str,
+        'targetFieldId': str
+    }
+    
+    errors = []
+    
+    for field, expected_type in required_fields.items():
+        value = data.get(field)
+        if value is None or value == "":
+            errors.append(f"Missing or empty required field: {field}")
+        elif not isinstance(value, expected_type) and not (isinstance(expected_type, tuple) and any(isinstance(value, t) for t in expected_type)):
+            errors.append(f"Invalid type for {field}: expected {expected_type}, got {type(value)}")
+            
+    # Additional validation for non-empty prompts
+    if data.get('custom_prompt') and len(data.get('custom_prompt').strip()) == 0:
+        errors.append("custom_prompt is empty after stripping whitespace")
+    if data.get('text_extraction_prompt') and len(data.get('text_extraction_prompt').strip()) == 0:
+        errors.append("text_extraction_prompt is empty after stripping whitespace")
+            
+    return errors
 
 def download_pdf(pdf_url, download_folder):
     try:
@@ -55,16 +83,19 @@ def upload_pdf_to_gemini(pdf_path):
 
 def extract_text_with_gemini(file_ref, text_extraction_prompt, temperature=0):
     try:
+        if not text_extraction_prompt or not text_extraction_prompt.strip():
+            raise ValueError("Text extraction prompt cannot be empty")
+
         model = genai.GenerativeModel(model_name='gemini-1.5-flash')
-        # Convert temperature to float
         temperature = float(temperature)
         generation_config = genai.types.GenerationConfig(temperature=temperature)
+        
+        logger.info(f"Extracting text with prompt: {text_extraction_prompt[:100]}...")
         response = model.generate_content([file_ref, text_extraction_prompt], generation_config=generation_config)
-        logger.info(f"Response from Gemini: {response}")
-
+        
         if response.candidates and response.candidates[0].content.parts:
             extracted_text = response.candidates[0].content.parts[0].text
-            logger.info(f"Extracted text from PDF: {extracted_text}")
+            logger.info(f"Successfully extracted text (length: {len(extracted_text)})")
             return extracted_text
         else:
             logger.warning("No text extracted from the PDF.")
@@ -88,72 +119,27 @@ def validate_and_repair_json(json_content):
             logger.error(f"Context around error: {json_content[max(0, e.pos - 40):e.pos + 40]}")
             return ""
 
-def generate_marking_guide_with_gemini(file_ref, marking_guide_prompt, temperature=0):
+def summarize_content_with_gemini(file_ref, custom_prompt, response_schema, assessment_type_prompt="", assessment_name_prompt="", marking_guide_prompt="", temperature=0):
     try:
-        model = genai.GenerativeModel(model_name='gemini-1.5-flash')
-        # Convert temperature to float
-        temperature = float(temperature)
-        generation_config = genai.types.GenerationConfig(temperature=temperature)
-        response = model.generate_content([file_ref, marking_guide_prompt], generation_config=generation_config)
-        if response.candidates and response.candidates[0].content.parts:
-            marking_guide = response.candidates[0].content.parts[0].text.strip()
-            logger.info(f"Generated marking guide: {marking_guide}")
-            return marking_guide
-        else:
-            logger.warning("No marking guide generated.")
-            return ""
-    except Exception as e:
-        logger.error(f"Error generating marking guide: {str(e)}")
-        raise
+        if not custom_prompt or not custom_prompt.strip():
+            raise ValueError("Custom prompt cannot be empty")
 
-def summarize_content_with_gemini(file_ref, custom_prompt, response_schema, assessment_type_prompt, assessment_name_prompt, marking_guide_prompt, temperature=0):
-    try:
         model = genai.GenerativeModel(model_name='gemini-1.5-flash')
-        # Convert temperature to float
         temperature = float(temperature)
         generation_config = genai.types.GenerationConfig(temperature=temperature)
 
-        # Generate the marking guide first
-        marking_guide = generate_marking_guide_with_gemini(file_ref, marking_guide_prompt, temperature)
-
-        if not marking_guide:
-            logger.warning("No marking guide generated.")
-            return "", "", "", ""
-
-        # Use the generated marking guide as part of the custom prompt for JSON extraction
-        json_prompt = f"{custom_prompt}\n\nUse the following marking guide to extract the information according to the schema:\n\n{marking_guide}\n\nSchema:\n{json.dumps(response_schema, indent=2)}"
-
-        # Generate JSON content using the marking guide as input
-        json_response = model.generate_content([file_ref, json_prompt], generation_config=generation_config)
-        type_response = model.generate_content([file_ref, assessment_type_prompt], generation_config=generation_config)
-        name_response = model.generate_content([file_ref, assessment_name_prompt], generation_config=generation_config)
+        logger.info(f"Generating content with prompt length: {len(custom_prompt)}")
+        json_response = model.generate_content([file_ref, custom_prompt], generation_config=generation_config)
 
         if json_response.candidates and json_response.candidates[0].content.parts:
             raw_json_content = json_response.candidates[0].content.parts[0].text
             json_content = validate_and_repair_json(raw_json_content)
-            logger.info(f"Validated and repaired JSON content: {json_content}")
+            logger.info("Successfully generated and validated JSON content")
         else:
-            logger.warning("No JSON content extracted.")
+            logger.warning("No JSON content generated.")
             json_content = ""
 
-        # Determine the assessment type
-        if type_response.candidates and type_response.candidates[0].content.parts and "Essay" in type_response.candidates[0].content.parts[0].text:
-            assessment_type = "Essay"
-        elif type_response.candidates and type_response.candidates[0].content.parts and "Exam style" in type_response.candidates[0].content.parts[0].text:
-            assessment_type = "Exam style"
-        else:
-            assessment_type = "Exam style"
-
-        logger.info(f"Determined assessment type: {assessment_type}")
-
-        # Determine the assessment name
-        if name_response.candidates and name_response.candidates[0].content.parts:
-            assessment_name = name_response.candidates[0].content.parts[0].text.strip()
-            logger.info(f"Generated assessment name: {assessment_name}")
-        else:
-            assessment_name = "Unknown"
-
-        return json_content, assessment_type, assessment_name, marking_guide
+        return json_content, "", "", ""
 
     except Exception as e:
         logger.error(f"Error in summarize_content_with_gemini: {str(e)}")
@@ -172,6 +158,7 @@ def send_to_airtable(record_id, json_content, assessment_type, assessment_name, 
             "target_field_id": target_field_id
         }
 
+        logger.info(f"Sending data to Airtable for record: {record_id}")
         response = requests.post(airtable_webhook_url, json=data)
         response.raise_for_status()
         logger.info("Successfully sent data to Airtable")
@@ -179,54 +166,56 @@ def send_to_airtable(record_id, json_content, assessment_type, assessment_name, 
         logger.error(f"Error sending data to Airtable: {str(e)}")
         raise
 
-def process_pdf_async_assessment(pdf_url, record_id, custom_prompt, response_schema, text_extraction_prompt, target_field_id, assessment_type_prompt, assessment_name_prompt, marking_guide_prompt, temperature=0):
-    def process():
-        try:
-            with tempfile.TemporaryDirectory() as temp_dir:
-                request_dir = pathlib.Path(temp_dir)
-
-                pdf_path = download_pdf(pdf_url, request_dir)
-                file_ref = upload_pdf_to_gemini(pdf_path)
-                extracted_text = extract_text_with_gemini(file_ref, text_extraction_prompt, temperature)
-
-                json_content, assessment_type, assessment_name, new_marking_guide = summarize_content_with_gemini(
-                    file_ref, custom_prompt, response_schema, assessment_type_prompt, assessment_name_prompt, marking_guide_prompt, temperature)
-                send_to_airtable(record_id, json_content, assessment_type, assessment_name, extracted_text, new_marking_guide, target_field_id, "Successfully processed by Gemini")
-
-        except Exception as e:
-            error_message = f"An error occurred during processing: {str(e)}"
-            logger.error(error_message)
-            logger.error(traceback.format_exc())
-            send_to_airtable(record_id, "", "", "", "", "", target_field_id, error_message)
-
-    executor.submit(process)
-
 def process_pdf_async_submission(pdf_url, record_id, custom_prompt, response_schema, text_extraction_prompt, target_field_id, temperature=0):
     def process():
         try:
+            # Log incoming parameters
+            logger.info(f"""
+Processing submission with parameters:
+PDF URL: {pdf_url}
+Record ID: {record_id}
+Custom Prompt Length: {len(custom_prompt) if custom_prompt else 0}
+Text Extraction Prompt Length: {len(text_extraction_prompt) if text_extraction_prompt else 0}
+Temperature: {temperature}
+            """)
+
+            # Validate prompts
+            if not custom_prompt or not custom_prompt.strip():
+                raise ValueError("Custom prompt is empty or contains only whitespace")
+            if not text_extraction_prompt or not text_extraction_prompt.strip():
+                raise ValueError("Text extraction prompt is empty or contains only whitespace")
+
             with tempfile.TemporaryDirectory() as temp_dir:
                 request_dir = pathlib.Path(temp_dir)
 
-                # Step 1: Download the PDF
+                # Download and process PDF
                 pdf_path = download_pdf(pdf_url, request_dir)
-
-                # Step 2: Upload the PDF to Gemini
                 file_ref = upload_pdf_to_gemini(pdf_path)
-
-                # Step 3: Extract text using the text extraction prompt
+                
+                # Extract text
+                logger.info("Attempting text extraction...")
                 extracted_text = extract_text_with_gemini(file_ref, text_extraction_prompt, temperature)
                 
                 if not extracted_text:
                     raise ValueError("No text extracted from the PDF. Cannot proceed with JSON generation.")
 
-                # Step 4: Use the extracted text to create the custom prompt
+                logger.info(f"Successfully extracted text of length: {len(extracted_text)}")
+
+                # Generate JSON content
                 updated_custom_prompt = f"{custom_prompt}\n\nExtracted Text:\n{extracted_text}\n\nSchema:\n{json.dumps(response_schema, indent=2)}"
-
-                # Step 5: Generate JSON content using the updated custom prompt
+                logger.info("Generating JSON content...")
+                
                 json_content, _, _, _ = summarize_content_with_gemini(
-                    file_ref, updated_custom_prompt, response_schema, "", "", "", temperature)
+                    file_ref, 
+                    updated_custom_prompt, 
+                    response_schema, 
+                    "", 
+                    "", 
+                    "", 
+                    temperature
+                )
 
-                # Step 6: Send the result to Airtable
+                # Send results to Airtable
                 send_to_airtable(
                     record_id,
                     json_content,
@@ -246,67 +235,47 @@ def process_pdf_async_submission(pdf_url, record_id, custom_prompt, response_sch
 
     executor.submit(process)
 
-@app.route('/process_pdf/assessment', methods=['POST'])
-def process_pdf_assessment_route():
-    try:
-        data = request.json
-        pdf_url = data.get('pdf_url')
-        record_id = data.get('record_id')
-        custom_prompt = data.get('custom_prompt')
-        response_schema = data.get('response_schema')
-        text_extraction_prompt = data.get('text_extraction_prompt')
-        target_field_id = data.get('targetFieldId')
-        assessment_type_prompt = data.get('assessment_type_prompt')
-        assessment_name_prompt = data.get('assessment_name_prompt')
-        marking_guide_prompt = data.get('marking_guide_prompt')
-        temperature = data.get('temperature', 0)  # Default to 0 if not provided
-
-        if isinstance(response_schema, str):
-            response_schema = json.loads(response_schema)
-
-        if pdf_url and record_id and response_schema and text_extraction_prompt and target_field_id:
-            process_pdf_async_assessment(pdf_url, record_id, custom_prompt, response_schema, text_extraction_prompt, target_field_id, assessment_type_prompt, assessment_name_prompt, marking_guide_prompt, temperature)
-            return jsonify({"status": "processing started"}), 200
-        else:
-            missing_fields = [field for field in ['pdf_url', 'record_id', 'response_schema', 'text_extraction_prompt', 'targetFieldId', 'assessment_type_prompt', 'assessment_name_prompt', 'marking_guide_prompt'] if not locals().get(field)]
-            error_message = f"Missing required fields: {', '.join(missing_fields)}"
-            logger.error(error_message)
-            return jsonify({"error": error_message}), 400
-    except json.JSONDecodeError as e:
-        error_message = f"Invalid JSON format in request body or response_schema: {str(e)}"
-        logger.error(error_message)
-        return jsonify({"error": error_message}), 400
-    except Exception as e:
-        error_message = f"An unexpected error occurred: {str(e)}"
-        logger.error(error_message)
-        logger.error(traceback.format_exc())
-        return jsonify({"error": error_message}), 500
-
 @app.route('/process_pdf/submission', methods=['POST'])
 def process_pdf_submission_route():
     try:
         data = request.json
-        pdf_url = data.get('pdf_url')
-        record_id = data.get('record_id')
-        custom_prompt = data.get('custom_prompt')
-        response_schema = data.get('response_schema')
-        text_extraction_prompt = data.get('text_extraction_prompt')
-        target_field_id = data.get('targetFieldId')
-        temperature = data.get('temperature', 0)  # Default to 0 if not provided
-
-        if isinstance(response_schema, str):
-            response_schema = json.loads(response_schema)
-
-        if pdf_url and record_id and response_schema and text_extraction_prompt and target_field_id:
-            process_pdf_async_submission(pdf_url, record_id, custom_prompt, response_schema, text_extraction_prompt, target_field_id, temperature)
-            return jsonify({"status": "submission processing started"}), 200
-        else:
-            missing_fields = [field for field in ['pdf_url', 'record_id', 'response_schema', 'text_extraction_prompt', 'targetFieldId'] if not locals().get(field)]
-            error_message = f"Missing required fields: {', '.join(missing_fields)}"
+        logger.info("Received request data: %s", json.dumps(data, indent=2))
+        
+        # Validate request data
+        validation_errors = validate_request_data(data)
+        if validation_errors:
+            error_message = f"Validation errors: {', '.join(validation_errors)}"
             logger.error(error_message)
             return jsonify({"error": error_message}), 400
+
+        pdf_url = data.get('pdf_url')
+        record_id = data.get('record_id')
+        custom_prompt = data.get('custom_prompt', '').strip()
+        response_schema = data.get('response_schema')
+        text_extraction_prompt = data.get('text_extraction_prompt', '').strip()
+        target_field_id = data.get('targetFieldId')
+        temperature = data.get('temperature', 0)
+
+        if isinstance(response_schema, str):
+            try:
+                response_schema = json.loads(response_schema)
+            except JSONDecodeError as e:
+                return jsonify({"error": f"Invalid response_schema JSON: {str(e)}"}), 400
+
+        process_pdf_async_submission(
+            pdf_url, 
+            record_id, 
+            custom_prompt, 
+            response_schema, 
+            text_extraction_prompt, 
+            target_field_id, 
+            temperature
+        )
+        
+        return jsonify({"status": "submission processing started"}), 200
+        
     except json.JSONDecodeError as e:
-        error_message = f"Invalid JSON format in request body or response_schema: {str(e)}"
+        error_message = f"Invalid JSON format in request body: {str(e)}"
         logger.error(error_message)
         return jsonify({"error": error_message}), 400
     except Exception as e:
