@@ -119,31 +119,77 @@ def validate_and_repair_json(json_content):
             logger.error(f"Context around error: {json_content[max(0, e.pos - 40):e.pos + 40]}")
             return ""
 
-def summarize_content_with_gemini(file_ref, custom_prompt, response_schema, assessment_type_prompt="", assessment_name_prompt="", marking_guide_prompt="", temperature=0):
+def generate_marking_guide_with_gemini(file_ref, marking_guide_prompt, temperature=0):
     try:
-        if not custom_prompt or not custom_prompt.strip():
-            raise ValueError("Custom prompt cannot be empty")
-
         model = genai.GenerativeModel(model_name='gemini-1.5-flash')
+        # Convert temperature to float
+        temperature = float(temperature)
+        generation_config = genai.types.GenerationConfig(temperature=temperature)
+        response = model.generate_content([file_ref, marking_guide_prompt], generation_config=generation_config)
+        if response.candidates and response.candidates[0].content.parts:
+            marking_guide = response.candidates[0].content.parts[0].text.strip()
+            logger.info(f"Generated marking guide: {marking_guide}")
+            return marking_guide
+        else:
+            logger.warning("No marking guide generated.")
+            return ""
+    except Exception as e:
+        logger.error(f"Error generating marking guide: {str(e)}")
+        raise
+
+def summarize_content_with_gemini(file_ref, custom_prompt, response_schema, assessment_type_prompt, assessment_name_prompt, marking_guide_prompt, temperature=0):
+    try:
+        model = genai.GenerativeModel(model_name='gemini-1.5-flash')
+        # Convert temperature to float
         temperature = float(temperature)
         generation_config = genai.types.GenerationConfig(temperature=temperature)
 
-        logger.info(f"Generating content with prompt length: {len(custom_prompt)}")
-        json_response = model.generate_content([file_ref, custom_prompt], generation_config=generation_config)
+        # Generate the marking guide first
+        marking_guide = generate_marking_guide_with_gemini(file_ref, marking_guide_prompt, temperature)
+
+        if not marking_guide:
+            logger.warning("No marking guide generated.")
+            return "", "", "", ""
+
+        # Use the generated marking guide as part of the custom prompt for JSON extraction
+        json_prompt = f"{custom_prompt}\n\nUse the following marking guide to extract the information according to the schema:\n\n{marking_guide}\n\nSchema:\n{json.dumps(response_schema, indent=2)}"
+
+        # Generate JSON content using the marking guide as input
+        json_response = model.generate_content([file_ref, json_prompt], generation_config=generation_config)
+        type_response = model.generate_content([file_ref, assessment_type_prompt], generation_config=generation_config)
+        name_response = model.generate_content([file_ref, assessment_name_prompt], generation_config=generation_config)
 
         if json_response.candidates and json_response.candidates[0].content.parts:
             raw_json_content = json_response.candidates[0].content.parts[0].text
             json_content = validate_and_repair_json(raw_json_content)
-            logger.info("Successfully generated and validated JSON content")
+            logger.info(f"Validated and repaired JSON content: {json_content}")
         else:
-            logger.warning("No JSON content generated.")
+            logger.warning("No JSON content extracted.")
             json_content = ""
 
-        return json_content, "", "", ""
+        # Determine the assessment type
+        if type_response.candidates and type_response.candidates[0].content.parts and "Essay" in type_response.candidates[0].content.parts[0].text:
+            assessment_type = "Essay"
+        elif type_response.candidates and type_response.candidates[0].content.parts and "Exam style" in type_response.candidates[0].content.parts[0].text:
+            assessment_type = "Exam style"
+        else:
+            assessment_type = "Exam style"
+
+        logger.info(f"Determined assessment type: {assessment_type}")
+
+        # Determine the assessment name
+        if name_response.candidates and name_response.candidates[0].content.parts:
+            assessment_name = name_response.candidates[0].content.parts[0].text.strip()
+            logger.info(f"Generated assessment name: {assessment_name}")
+        else:
+            assessment_name = "Unknown"
+
+        return json_content, assessment_type, assessment_name, marking_guide
 
     except Exception as e:
         logger.error(f"Error in summarize_content_with_gemini: {str(e)}")
         raise
+
 
 def send_to_airtable(record_id, json_content, assessment_type, assessment_name, extracted_text, new_marking_guide, target_field_id, status_message):
     try:
