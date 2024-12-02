@@ -183,7 +183,7 @@ def summarize_content_with_gemini(file_ref, custom_prompt, response_schema, asse
         logger.error(f"Error in summarize_content_with_gemini: {str(e)}")
         raise
 
-def send_to_airtable(record_id, json_content, assessment_type, assessment_name, extracted_text, new_marking_guide, target_field_id, status_message):
+def send_to_airtable(record_id, json_content, assessment_type, assessment_name, extracted_text, new_marking_guide, target_field_id, status_message, student_name=None):
     try:
         # Create the payload
         data = {
@@ -194,8 +194,12 @@ def send_to_airtable(record_id, json_content, assessment_type, assessment_name, 
             "extracted_text": extracted_text,
             "new_marking_guide": new_marking_guide,
             "status_message": status_message,
-            "target_field_id": target_field_id
+            "target_field_id": target_field_id,
         }
+
+        # Add student_name if provided
+        if student_name:
+            data["student_name"] = student_name
 
         # Log the size of each field
         logger.info("Logging field sizes (in bytes):")
@@ -216,8 +220,36 @@ def send_to_airtable(record_id, json_content, assessment_type, assessment_name, 
     except requests.RequestException as e:
         logger.error(f"Error sending data to Airtable: {str(e)}")
         raise
+        
+def extract_student_name_with_gemini(file_ref, student_name_prompt, temperature=0):
+    """
+    Extract the student name using a prompt.
+    """
+    try:
+        if not student_name_prompt or not student_name_prompt.strip():
+            raise ValueError("Student name prompt cannot be empty")
 
-def process_pdf_async_submission(pdf_url, record_id, custom_prompt, response_schema, text_extraction_prompt, target_field_id, temperature=0):
+        model = genai.GenerativeModel(model_name='gemini-1.5-flash')
+        temperature = float(temperature)
+        generation_config = genai.types.GenerationConfig(temperature=temperature)
+        
+        logger.info(f"Extracting student name with prompt: {student_name_prompt[:100]}...")
+        response = model.generate_content([file_ref, student_name_prompt], generation_config=generation_config)
+        
+        if response.candidates and response.candidates[0].content.parts:
+            student_name = response.candidates[0].content.parts[0].text.strip()
+            logger.info(f"Successfully extracted student name: {student_name}")
+            return student_name
+        else:
+            logger.warning("No student name extracted from the PDF.")
+            return ""
+    except Exception as e:
+        logger.error(f"Error in extract_student_name_with_gemini: {str(e)}")
+        raise
+
+
+def process_pdf_async_submission(pdf_url, record_id, custom_prompt, response_schema, 
+                                  text_extraction_prompt, student_name_prompt, target_field_id, temperature=0):
     def process():
         try:
             logger.info(f"Processing submission with parameters: PDF URL: {pdf_url}, Record ID: {record_id}")
@@ -226,10 +258,17 @@ def process_pdf_async_submission(pdf_url, record_id, custom_prompt, response_sch
                 pdf_path = download_pdf(pdf_url, temp_dir)
                 file_ref = upload_pdf_to_gemini(pdf_path)
 
+                # Extract text
                 extracted_text = extract_text_with_gemini(file_ref, text_extraction_prompt, temperature)
                 if not extracted_text:
                     raise ValueError("No text extracted from the PDF. Cannot proceed.")
 
+                # Extract student name using the prompt from Airtable
+                if not student_name_prompt or not student_name_prompt.strip():
+                    raise ValueError("Student name prompt cannot be empty.")
+                student_name = extract_student_name_with_gemini(file_ref, student_name_prompt, temperature)
+
+                # Summarize content and generate JSON
                 json_content, _, _, _ = summarize_content_with_gemini(
                     file_ref, 
                     custom_prompt, 
@@ -237,6 +276,7 @@ def process_pdf_async_submission(pdf_url, record_id, custom_prompt, response_sch
                     temperature=temperature
                 )
 
+                # Send results to Airtable
                 send_to_airtable(
                     record_id,
                     json_content,
@@ -245,7 +285,8 @@ def process_pdf_async_submission(pdf_url, record_id, custom_prompt, response_sch
                     extracted_text,
                     "",  # No marking guide for submission
                     target_field_id,
-                    "Successfully processed submission by Gemini"
+                    f"Successfully processed submission by Gemini. Student name: {student_name}",
+                    student_name=student_name  # Pass the extracted student name
                 )
 
         except Exception as e:
@@ -274,6 +315,7 @@ def process_pdf_submission_route():
         custom_prompt = data.get('custom_prompt', '').strip()
         response_schema = data.get('response_schema')
         text_extraction_prompt = data.get('text_extraction_prompt', '').strip()
+        student_name_prompt = data.get('student_name_prompt', '').strip()  # Add this line
         target_field_id = data.get('targetFieldId')
         temperature = data.get('temperature', 0)
 
@@ -283,12 +325,14 @@ def process_pdf_submission_route():
             except JSONDecodeError as e:
                 return jsonify({"error": f"Invalid response_schema JSON: {str(e)}"}), 400
 
+        # Pass student_name_prompt to the async function
         process_pdf_async_submission(
             pdf_url, 
             record_id, 
             custom_prompt, 
             response_schema, 
             text_extraction_prompt, 
+            student_name_prompt,  # Add this parameter
             target_field_id, 
             temperature
         )
@@ -304,8 +348,6 @@ def process_pdf_submission_route():
         logger.error(error_message)
         logger.error(traceback.format_exc())
         return jsonify({"error": error_message}), 500
-
-atexit.register(executor.shutdown)
 
 @app.route('/process_pdf/assessment', methods=['POST'])
 def process_pdf_assessment_route():
