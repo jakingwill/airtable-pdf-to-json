@@ -315,6 +315,7 @@ def process_pdf_submission_route():
         custom_prompt = data.get('custom_prompt', '').strip()
         response_schema = data.get('response_schema')
         text_extraction_prompt = data.get('text_extraction_prompt', '').strip()
+        student_name_prompt = data.get('student_name_prompt', '').strip()  # Add this line
         target_field_id = data.get('targetFieldId')
         temperature = data.get('temperature', 0)
 
@@ -324,12 +325,14 @@ def process_pdf_submission_route():
             except JSONDecodeError as e:
                 return jsonify({"error": f"Invalid response_schema JSON: {str(e)}"}), 400
 
+        # Pass student_name_prompt to the async function
         process_pdf_async_submission(
             pdf_url, 
             record_id, 
             custom_prompt, 
             response_schema, 
             text_extraction_prompt, 
+            student_name_prompt,  # Add this parameter
             target_field_id, 
             temperature
         )
@@ -345,8 +348,6 @@ def process_pdf_submission_route():
         logger.error(error_message)
         logger.error(traceback.format_exc())
         return jsonify({"error": error_message}), 500
-
-atexit.register(executor.shutdown)
 
 @app.route('/process_pdf/assessment', methods=['POST'])
 def process_pdf_assessment_route():
