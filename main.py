@@ -249,7 +249,7 @@ def extract_student_name_with_gemini(file_ref, student_name_prompt, temperature=
 
 
 def process_pdf_async_submission(pdf_url, record_id, custom_prompt, response_schema, 
-                                  text_extraction_prompt, target_field_id, temperature=0):
+                                  text_extraction_prompt, student_name_prompt, target_field_id, temperature=0):
     def process():
         try:
             logger.info(f"Processing submission with parameters: PDF URL: {pdf_url}, Record ID: {record_id}")
@@ -263,8 +263,9 @@ def process_pdf_async_submission(pdf_url, record_id, custom_prompt, response_sch
                 if not extracted_text:
                     raise ValueError("No text extracted from the PDF. Cannot proceed.")
 
-                # Extract student name
-                student_name_prompt = "Please identify the student's name from the provided text. If no name is found, return 'Unknown'."
+                # Extract student name using the prompt from Airtable
+                if not student_name_prompt or not student_name_prompt.strip():
+                    raise ValueError("Student name prompt cannot be empty.")
                 student_name = extract_student_name_with_gemini(file_ref, student_name_prompt, temperature)
 
                 # Summarize content and generate JSON
@@ -287,8 +288,6 @@ def process_pdf_async_submission(pdf_url, record_id, custom_prompt, response_sch
                     f"Successfully processed submission by Gemini. Student name: {student_name}",
                     student_name=student_name  # Pass the extracted student name
                 )
-
-
 
         except Exception as e:
             error_message = f"An error occurred during submission processing: {str(e)}"
