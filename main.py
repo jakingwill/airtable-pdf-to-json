@@ -199,18 +199,14 @@ def send_to_airtable(record_id, json_content, assessment_type, assessment_name, 
             "curriculum": curriculum,
             "subject": subject,
             "topic": topic,
-            "grade_year": grade_year
+            "grade_year": grade_year,
+            "student_name": student_name if student_name else ""
         }
-
-
-        # Add student_name if provided
-        if student_name:
-            data["student_name"] = student_name
 
         # Log the size of each field
         logger.info("Logging field sizes (in bytes):")
         for key, value in data.items():
-            if isinstance(value, str):  # Calculate size only for strings
+            if isinstance(value, str):
                 logger.info(f"  {key}: {len(value.encode('utf-8'))} bytes")
 
         # Log total payload size
@@ -226,6 +222,7 @@ def send_to_airtable(record_id, json_content, assessment_type, assessment_name, 
     except requests.RequestException as e:
         logger.error(f"Error sending data to Airtable: {str(e)}")
         raise
+
         
 def extract_student_name_with_gemini(file_ref, student_name_prompt, temperature=0):
     """
