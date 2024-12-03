@@ -6,7 +6,7 @@ import requests
 from flask import Flask, request, jsonify
 import pathlib
 import json
-import tempfile
+tempfile
 import logging
 import traceback
 from json_repair import repair_json
@@ -43,7 +43,7 @@ def validate_request_data(data):
         if value is None or value == "":
             errors.append(f"Missing or empty required field: {field}")
         elif not isinstance(value, expected_type) and not (isinstance(expected_type, tuple) and any(isinstance(value, t) for t in expected_type)):
-            errors.append(f"Invalid type for {field}: expected {expected_type}, got {type(value)})")
+            errors.append(f"Invalid type for {field}: expected {expected_type}, got {type(value)}")
             
     # Additional validation for non-empty combined prompt
     if data.get('combined_prompt') and len(data.get('combined_prompt').strip()) == 0:
@@ -342,3 +342,22 @@ def process_pdf_async_submission(pdf_url, record_id, custom_prompt, response_sch
                 send_to_airtable(
                     record_id,
                     json_content,
+                    "",  # No assessment type for submission
+                    "",  # No assessment name for submission
+                    extracted_text,
+                    "",  # No marking guide for submission
+                    target_field_id,
+                    f"Successfully processed submission by Gemini. Student name: {student_name}",
+                    student_name=student_name  # Pass the extracted student name
+                )
+
+        except Exception as e:
+            error_message = f"An error occurred during submission processing: {str(e)}"
+            logger.error(error_message)
+            logger.error(traceback.format_exc())
+            send_to_airtable(record_id, "", "", "", "", "", target_field_id, error_message)
+
+    executor.submit(process)
+
+if __name__ == '__main__':
+    app.run(debug=True)
