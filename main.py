@@ -484,20 +484,23 @@ Temperature: {temperature}
                 # END ADDITION FOR ASSESSMENT_DATA_PROMPT
 
                 # Send results to Airtable
-                send_to_airtable(
-                    record_id,
-                    json_content,
-                    assessment_type,
-                    assessment_name,
-                    extracted_text,
-                    new_marking_guide,
-                    target_field_id,
-                    "Successfully processed assessment by Gemini",
-                    curriculum=curriculum,
-                    subject=subject,
-                    topic=topic,
-                    grade_year=grade_year
-                )
+                # Send results to Airtable
+                    send_to_airtable(
+                        record_id,
+                        json_content,
+                        assessment_type,
+                        assessment_name,
+                        extracted_text,
+                        new_marking_guide,
+                        target_field_id,
+                        "Successfully processed assessment by Gemini",
+                        student_name="",  # Pass in an empty string for student_name
+                        curriculum=curriculum,
+                        subject=subject,
+                        topic=topic,
+                        grade_year=grade_year
+                    )
+                    
 
         except Exception as e:
             error_message = f"An error occurred during assessment processing: {str(e)}"
