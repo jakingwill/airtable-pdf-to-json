@@ -137,7 +137,7 @@ def generate_marking_guide_with_gemini(file_ref, marking_guide_prompt, temperatu
         logger.error(f"Error generating marking guide: {str(e)}")
         raise
 
-def summarize_content_with_gemini(file_ref, custom_prompt, response_schema, assessment_type_prompt=None, assessment_name_prompt=None, marking_guide_prompt=None, temperature=0):
+def summarize_content_with_gemini(file_ref, custom_prompt, response_schema, assessment_type_prompt=None, assessment_name_prompt=None, marking_guide_prompt=None, temperature=0, subject_prompt=None, topic_prompt=None, grade_prompt=None, curriculum_prompt=None):
     try:
         model = genai.GenerativeModel(model_name='gemini-1.5-flash')
         temperature = float(temperature)
@@ -164,9 +164,14 @@ def summarize_content_with_gemini(file_ref, custom_prompt, response_schema, asse
         else:
             json_content = ""
 
-        # Optional: Generate assessment type and name if prompts are provided
+        # Optional: Generate assessment type, name, subject, topic, grade, and curriculum if prompts are provided
         assessment_type = ""
         assessment_name = ""
+        subject = ""
+        topic = ""
+        grade = ""
+        curriculum = ""
+
         if assessment_type_prompt:
             type_response = model.generate_content([file_ref, assessment_type_prompt], generation_config=generation_config)
             if type_response.candidates and type_response.candidates[0].content.parts:
@@ -176,14 +181,34 @@ def summarize_content_with_gemini(file_ref, custom_prompt, response_schema, asse
             name_response = model.generate_content([file_ref, assessment_name_prompt], generation_config=generation_config)
             if name_response.candidates and name_response.candidates[0].content.parts:
                 assessment_name = name_response.candidates[0].content.parts[0].text.strip()
+        
+        if subject_prompt:
+            subject_response = model.generate_content([file_ref, subject_prompt], generation_config=generation_config)
+            if subject_response.candidates and subject_response.candidates[0].content.parts:
+                subject = subject_response.candidates[0].content.parts[0].text.strip()
+        
+        if topic_prompt:
+            topic_response = model.generate_content([file_ref, topic_prompt], generation_config=generation_config)
+            if topic_response.candidates and topic_response.candidates[0].content.parts:
+                topic = topic_response.candidates[0].content.parts[0].text.strip()
+        
+        if grade_prompt:
+            grade_response = model.generate_content([file_ref, grade_prompt], generation_config=generation_config)
+            if grade_response.candidates and grade_response.candidates[0].content.parts:
+                grade = grade_response.candidates[0].content.parts[0].text.strip()
+        
+        if curriculum_prompt:
+            curriculum_response = model.generate_content([file_ref, curriculum_prompt], generation_config=generation_config)
+            if curriculum_response.candidates and curriculum_response.candidates[0].content.parts:
+                curriculum = curriculum_response.candidates[0].content.parts[0].text.strip()
 
-        return json_content, assessment_type, assessment_name, marking_guide
+        return json_content, assessment_type, assessment_name, marking_guide, subject, topic, grade, curriculum
 
     except Exception as e:
         logger.error(f"Error in summarize_content_with_gemini: {str(e)}")
         raise
 
-def send_to_airtable(record_id, json_content, assessment_type, assessment_name, extracted_text, new_marking_guide, target_field_id, status_message, student_name=None):
+def send_to_airtable(record_id, json_content, assessment_type, assessment_name, extracted_text, new_marking_guide, target_field_id, status_message, subject=None, topic=None, grade=None, curriculum=None, student_name=None):
     try:
         # Create the payload
         data = {
@@ -195,6 +220,10 @@ def send_to_airtable(record_id, json_content, assessment_type, assessment_name, 
             "new_marking_guide": new_marking_guide,
             "status_message": status_message,
             "target_field_id": target_field_id,
+            "subject": subject,
+            "topic": topic,
+            "grade": grade,
+            "curriculum": curriculum
         }
 
         # Add student_name if provided
@@ -220,134 +249,6 @@ def send_to_airtable(record_id, json_content, assessment_type, assessment_name, 
     except requests.RequestException as e:
         logger.error(f"Error sending data to Airtable: {str(e)}")
         raise
-        
-def extract_student_name_with_gemini(file_ref, student_name_prompt, temperature=0):
-    """
-    Extract the student name using a prompt.
-    """
-    try:
-        if not student_name_prompt or not student_name_prompt.strip():
-            raise ValueError("Student name prompt cannot be empty")
-
-        model = genai.GenerativeModel(model_name='gemini-1.5-flash')
-        temperature = float(temperature)
-        generation_config = genai.types.GenerationConfig(temperature=temperature)
-        
-        logger.info(f"Extracting student name with prompt: {student_name_prompt[:100]}...")
-        response = model.generate_content([file_ref, student_name_prompt], generation_config=generation_config)
-        
-        if response.candidates and response.candidates[0].content.parts:
-            student_name = response.candidates[0].content.parts[0].text.strip()
-            logger.info(f"Successfully extracted student name: {student_name}")
-            return student_name
-        else:
-            logger.warning("No student name extracted from the PDF.")
-            return ""
-    except Exception as e:
-        logger.error(f"Error in extract_student_name_with_gemini: {str(e)}")
-        raise
-
-
-def process_pdf_async_submission(pdf_url, record_id, custom_prompt, response_schema, 
-                                  text_extraction_prompt, student_name_prompt, target_field_id, temperature=0):
-    def process():
-        try:
-            logger.info(f"Processing submission with parameters: PDF URL: {pdf_url}, Record ID: {record_id}")
-
-            with tempfile.TemporaryDirectory() as temp_dir:
-                pdf_path = download_pdf(pdf_url, temp_dir)
-                file_ref = upload_pdf_to_gemini(pdf_path)
-
-                # Extract text
-                extracted_text = extract_text_with_gemini(file_ref, text_extraction_prompt, temperature)
-                if not extracted_text:
-                    raise ValueError("No text extracted from the PDF. Cannot proceed.")
-
-                # Extract student name using the prompt from Airtable
-                if not student_name_prompt or not student_name_prompt.strip():
-                    raise ValueError("Student name prompt cannot be empty.")
-                student_name = extract_student_name_with_gemini(file_ref, student_name_prompt, temperature)
-
-                # Summarize content and generate JSON
-                json_content, _, _, _ = summarize_content_with_gemini(
-                    file_ref, 
-                    custom_prompt, 
-                    response_schema, 
-                    temperature=temperature
-                )
-
-                # Send results to Airtable
-                send_to_airtable(
-                    record_id,
-                    json_content,
-                    "",  # No assessment type for submission
-                    "",  # No assessment name for submission
-                    extracted_text,
-                    "",  # No marking guide for submission
-                    target_field_id,
-                    f"Successfully processed submission by Gemini. Student name: {student_name}",
-                    student_name=student_name  # Pass the extracted student name
-                )
-
-        except Exception as e:
-            error_message = f"An error occurred during submission processing: {str(e)}"
-            logger.error(error_message)
-            logger.error(traceback.format_exc())
-            send_to_airtable(record_id, "", "", "", "", "", target_field_id, error_message)
-
-    executor.submit(process)
-
-@app.route('/process_pdf/submission', methods=['POST'])
-def process_pdf_submission_route():
-    try:
-        data = request.json
-        logger.info("Received request data: %s", json.dumps(data, indent=2))
-        
-        # Validate request data
-        validation_errors = validate_request_data(data)
-        if validation_errors:
-            error_message = f"Validation errors: {', '.join(validation_errors)}"
-            logger.error(error_message)
-            return jsonify({"error": error_message}), 400
-
-        pdf_url = data.get('pdf_url')
-        record_id = data.get('record_id')
-        custom_prompt = data.get('custom_prompt', '').strip()
-        response_schema = data.get('response_schema')
-        text_extraction_prompt = data.get('text_extraction_prompt', '').strip()
-        student_name_prompt = data.get('student_name_prompt', '').strip()  # Add this line
-        target_field_id = data.get('targetFieldId')
-        temperature = data.get('temperature', 0)
-
-        if isinstance(response_schema, str):
-            try:
-                response_schema = json.loads(response_schema)
-            except JSONDecodeError as e:
-                return jsonify({"error": f"Invalid response_schema JSON: {str(e)}"}), 400
-
-        # Pass student_name_prompt to the async function
-        process_pdf_async_submission(
-            pdf_url, 
-            record_id, 
-            custom_prompt, 
-            response_schema, 
-            text_extraction_prompt, 
-            student_name_prompt,  # Add this parameter
-            target_field_id, 
-            temperature
-        )
-        
-        return jsonify({"status": "submission processing started"}), 200
-        
-    except json.JSONDecodeError as e:
-        error_message = f"Invalid JSON format in request body: {str(e)}"
-        logger.error(error_message)
-        return jsonify({"error": error_message}), 400
-    except Exception as e:
-        error_message = f"An unexpected error occurred: {str(e)}"
-        logger.error(error_message)
-        logger.error(traceback.format_exc())
-        return jsonify({"error": error_message}), 500
 
 @app.route('/process_pdf/assessment', methods=['POST'])
 def process_pdf_assessment_route():
@@ -358,7 +259,8 @@ def process_pdf_assessment_route():
         # Validate required fields
         required_fields = ['pdf_url', 'record_id', 'custom_prompt', 'response_schema', 
                            'text_extraction_prompt', 'targetFieldId', 'assessment_type_prompt', 
-                           'assessment_name_prompt', 'marking_guide_prompt']
+                           'assessment_name_prompt', 'marking_guide_prompt', 'subject_prompt', 
+                           'topic_prompt', 'grade_prompt', 'curriculum_prompt']
         missing_fields = [field for field in required_fields if not data.get(field)]
         if missing_fields:
             error_message = f"Missing required fields: {', '.join(missing_fields)}"
@@ -374,6 +276,10 @@ def process_pdf_assessment_route():
         assessment_type_prompt = data.get('assessment_type_prompt', '').strip()
         assessment_name_prompt = data.get('assessment_name_prompt', '').strip()
         marking_guide_prompt = data.get('marking_guide_prompt', '').strip()
+        subject_prompt = data.get('subject_prompt', '').strip()
+        topic_prompt = data.get('topic_prompt', '').strip()
+        grade_prompt = data.get('grade_prompt', '').strip()
+        curriculum_prompt = data.get('curriculum_prompt', '').strip()
         temperature = data.get('temperature', 0)
 
         # Parse response_schema if provided as string
@@ -395,7 +301,11 @@ def process_pdf_assessment_route():
             assessment_type_prompt, 
             assessment_name_prompt, 
             marking_guide_prompt, 
-            temperature
+            temperature,
+            subject_prompt,
+            topic_prompt,
+            grade_prompt,
+            curriculum_prompt
         )
         
         return jsonify({"status": "assessment processing started"}), 200
@@ -412,7 +322,8 @@ def process_pdf_assessment_route():
 
 def process_pdf_async_assessment(pdf_url, record_id, custom_prompt, response_schema, text_extraction_prompt, 
                                   target_field_id, assessment_type_prompt, assessment_name_prompt, 
-                                  marking_guide_prompt, temperature=0):
+                                  marking_guide_prompt, temperature=0, subject_prompt=None, topic_prompt=None, 
+                                  grade_prompt=None, curriculum_prompt=None):
     def process():
         try:
             logger.info(f"""
@@ -441,14 +352,18 @@ Temperature: {temperature}
                 logger.info(f"Successfully extracted text of length: {len(extracted_text)}")
 
                 # Generate JSON content and additional details
-                json_content, assessment_type, assessment_name, new_marking_guide = summarize_content_with_gemini(
+                json_content, assessment_type, assessment_name, new_marking_guide, subject, topic, grade, curriculum = summarize_content_with_gemini(
                     file_ref, 
                     custom_prompt, 
                     response_schema, 
                     assessment_type_prompt, 
                     assessment_name_prompt, 
                     marking_guide_prompt, 
-                    temperature
+                    temperature,
+                    subject_prompt,
+                    topic_prompt,
+                    grade_prompt,
+                    curriculum_prompt
                 )
 
                 # Send results to Airtable
@@ -460,7 +375,11 @@ Temperature: {temperature}
                     extracted_text,
                     new_marking_guide,
                     target_field_id,
-                    "Successfully processed assessment by Gemini"
+                    "Successfully processed assessment by Gemini",
+                    subject=subject,
+                    topic=topic,
+                    grade=grade,
+                    curriculum=curriculum
                 )
 
         except Exception as e:
@@ -470,7 +389,6 @@ Temperature: {temperature}
             send_to_airtable(record_id, "", "", "", "", "", target_field_id, error_message)
 
     executor.submit(process)
-
 
 if __name__ == '__main__':
     app.run(debug=True)
