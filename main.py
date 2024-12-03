@@ -113,25 +113,67 @@ def summarize_content_with_gemini(file_ref, combined_prompt, temperature=0):
             topic = parsed_response.get('topic', 'Topic not determined')
             grade = parsed_response.get('grade', 'Grade not determined')
             curriculum = parsed_response.get('curriculum', 'Curriculum not determined')
-            assessment_type = parsed_response.get('assessment_type', 'Assessment type not determined')
 
-            return subject, topic, grade, curriculum, assessment_type
+            return subject, topic, grade, curriculum
 
         else:
             logger.warning("No information extracted from the PDF.")
-            return "Subject not determined", "Topic not determined", "Grade not determined", "Curriculum not determined", "Assessment type not determined"
+            return "Subject not determined", "Topic not determined", "Grade not determined", "Curriculum not determined"
 
     except Exception as e:
         logger.error(f"Error in summarize_content_with_gemini: {str(e)}")
         raise
 
-def send_to_airtable(record_id, json_content, assessment_type, extracted_text, target_field_id, status_message, subject=None, topic=None, grade=None, curriculum=None):
+def extract_assessment_type_with_gemini(file_ref, assessment_type_prompt, temperature=0):
+    try:
+        model = genai.GenerativeModel(model_name='gemini-1.5-flash')
+        temperature = float(temperature)
+        generation_config = genai.types.GenerationConfig(temperature=temperature)
+
+        logger.info(f"Extracting assessment type with prompt: {assessment_type_prompt[:100]}...")
+        response = model.generate_content([file_ref, assessment_type_prompt], generation_config=generation_config)
+
+        if response.candidates and response.candidates[0].content.parts:
+            assessment_type = response.candidates[0].content.parts[0].text.strip()
+            logger.info(f"Extracted assessment type: {assessment_type}")
+            return assessment_type
+        else:
+            logger.warning("No assessment type extracted from the PDF.")
+            return "Assessment type not determined"
+
+    except Exception as e:
+        logger.error(f"Error in extract_assessment_type_with_gemini: {str(e)}")
+        raise
+
+def extract_assessment_name_with_gemini(file_ref, assessment_name_prompt, temperature=0):
+    try:
+        model = genai.GenerativeModel(model_name='gemini-1.5-flash')
+        temperature = float(temperature)
+        generation_config = genai.types.GenerationConfig(temperature=temperature)
+
+        logger.info(f"Extracting assessment name with prompt: {assessment_name_prompt[:100]}...")
+        response = model.generate_content([file_ref, assessment_name_prompt], generation_config=generation_config)
+
+        if response.candidates and response.candidates[0].content.parts:
+            assessment_name = response.candidates[0].content.parts[0].text.strip()
+            logger.info(f"Extracted assessment name: {assessment_name}")
+            return assessment_name
+        else:
+            logger.warning("No assessment name extracted from the PDF.")
+            return "Assessment name not determined"
+
+    except Exception as e:
+        logger.error(f"Error in extract_assessment_name_with_gemini: {str(e)}")
+        raise
+
+def send_to_airtable(record_id, json_content, assessment_type, assessment_name, extracted_text, target_field_id, status_message, subject=None, topic=None, grade=None, curriculum=None):
     try:
         # Create the payload
         data = {
             "record_id": record_id,
             "json_content": json_content,
             "assessmentType": assessment_type,
+            "assessmentName": assessment_name,
             "extracted_text": extracted_text,
             "status_message": status_message,
             "target_field_id": target_field_id,
@@ -179,6 +221,8 @@ def process_pdf_assessment_route():
         combined_prompt = data.get('combined_prompt', '').strip()
         response_schema = data.get('response_schema')
         target_field_id = data.get('targetFieldId')
+        assessment_type_prompt = data.get('assessment_type_prompt', '').strip()
+        assessment_name_prompt = data.get('assessment_name_prompt', '').strip()
         temperature = data.get('temperature', 0)
 
         # Parse response_schema if provided as string
@@ -196,6 +240,8 @@ def process_pdf_assessment_route():
             combined_prompt, 
             response_schema, 
             target_field_id, 
+            assessment_type_prompt,
+            assessment_name_prompt,
             temperature
         )
         
@@ -211,7 +257,7 @@ def process_pdf_assessment_route():
         logger.error(traceback.format_exc())
         return jsonify({"error": error_message}), 500
 
-def process_pdf_async_assessment(pdf_url, record_id, combined_prompt, response_schema, target_field_id, temperature=0):
+def process_pdf_async_assessment(pdf_url, record_id, combined_prompt, response_schema, target_field_id, assessment_type_prompt, assessment_name_prompt, temperature=0):
     def process():
         try:
             logger.info(f"""
@@ -229,18 +275,25 @@ Temperature: {temperature}
                 pdf_path = download_pdf(pdf_url, request_dir)
                 file_ref = upload_pdf_to_gemini(pdf_path)
                 
-                # Generate JSON content and additional details
-                subject, topic, grade, curriculum, assessment_type = summarize_content_with_gemini(
+                # Extract subject, topic, grade, curriculum
+                subject, topic, grade, curriculum = summarize_content_with_gemini(
                     file_ref, 
                     combined_prompt, 
                     temperature
                 )
+
+                # Extract assessment type separately
+                assessment_type = extract_assessment_type_with_gemini(file_ref, assessment_type_prompt, temperature)
+
+                # Extract assessment name separately
+                assessment_name = extract_assessment_name_with_gemini(file_ref, assessment_name_prompt, temperature)
 
                 # Send results to Airtable
                 send_to_airtable(
                     record_id,
                     "",  # JSON content already extracted separately
                     assessment_type,
+                    assessment_name,
                     "",  # No text extraction needed here
                     target_field_id,
                     "Successfully processed assessment by Gemini",
