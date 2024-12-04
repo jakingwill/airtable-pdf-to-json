@@ -183,7 +183,8 @@ def summarize_content_with_gemini(file_ref, custom_prompt, response_schema, asse
         logger.error(f"Error in summarize_content_with_gemini: {str(e)}")
         raise
 
-def send_to_airtable(record_id, json_content, assessment_type, assessment_name, extracted_text, new_marking_guide, target_field_id, status_message, student_name=None):
+def send_to_airtable(record_id, json_content, assessment_type, assessment_name, extracted_text, new_marking_guide, target_field_id, status_message, student_name=None, subject="", topic="", grade_year=""):
+
     try:
         # Create the payload
         data = {
@@ -195,16 +196,17 @@ def send_to_airtable(record_id, json_content, assessment_type, assessment_name, 
             "new_marking_guide": new_marking_guide,
             "status_message": status_message,
             "target_field_id": target_field_id,
+            #"curriculum": curriculum,
+            "subject": subject,
+            "topic": topic,
+            "grade_year": grade_year,
+            "student_name": student_name if student_name else ""
         }
-
-        # Add student_name if provided
-        if student_name:
-            data["student_name"] = student_name
 
         # Log the size of each field
         logger.info("Logging field sizes (in bytes):")
         for key, value in data.items():
-            if isinstance(value, str):  # Calculate size only for strings
+            if isinstance(value, str):
                 logger.info(f"  {key}: {len(value.encode('utf-8'))} bytes")
 
         # Log total payload size
@@ -220,6 +222,7 @@ def send_to_airtable(record_id, json_content, assessment_type, assessment_name, 
     except requests.RequestException as e:
         logger.error(f"Error sending data to Airtable: {str(e)}")
         raise
+
         
 def extract_student_name_with_gemini(file_ref, student_name_prompt, temperature=0):
     """
@@ -375,6 +378,7 @@ def process_pdf_assessment_route():
         assessment_name_prompt = data.get('assessment_name_prompt', '').strip()
         marking_guide_prompt = data.get('marking_guide_prompt', '').strip()
         temperature = data.get('temperature', 0)
+        assessment_data_prompt = data.get('assessment_data_prompt', '').strip()
 
         # Parse response_schema if provided as string
         if isinstance(response_schema, str):
@@ -395,7 +399,8 @@ def process_pdf_assessment_route():
             assessment_type_prompt, 
             assessment_name_prompt, 
             marking_guide_prompt, 
-            temperature
+            temperature,
+            assessment_data_prompt
         )
         
         return jsonify({"status": "assessment processing started"}), 200
@@ -411,8 +416,8 @@ def process_pdf_assessment_route():
         return jsonify({"error": error_message}), 500
 
 def process_pdf_async_assessment(pdf_url, record_id, custom_prompt, response_schema, text_extraction_prompt, 
-                                  target_field_id, assessment_type_prompt, assessment_name_prompt, 
-                                  marking_guide_prompt, temperature=0):
+                                 target_field_id, assessment_type_prompt, assessment_name_prompt, 
+                                 marking_guide_prompt, temperature=0, assessment_data_prompt=""):
     def process():
         try:
             logger.info(f"""
@@ -451,17 +456,48 @@ Temperature: {temperature}
                     temperature
                 )
 
+                # BEGIN ADDITION FOR ASSESSMENT_DATA_PROMPT (Step 4)
+                #curriculum = ""
+                subject = ""
+                topic = ""
+                grade_year = ""
+
+                if assessment_data_prompt:
+                    model = genai.GenerativeModel(model_name='gemini-1.5-flash')
+                    temp_float = float(temperature)
+                    generation_config = genai.types.GenerationConfig(temperature=temp_float)
+                    
+                    data_response = model.generate_content([file_ref, assessment_data_prompt], generation_config=generation_config)
+                    
+                    if data_response.candidates and data_response.candidates[0].content.parts:
+                        raw_assessment_data = data_response.candidates[0].content.parts[0].text.strip()
+                        repaired_assessment_data = validate_and_repair_json(raw_assessment_data)
+                        if repaired_assessment_data:
+                            parsed_data = json.loads(repaired_assessment_data)
+                            #curriculum = parsed_data.get("curriculum", "")
+                            subject = parsed_data.get("subject", "")
+                            topic = parsed_data.get("topic", "")
+                            grade_year = parsed_data.get("grade_year", "")
+                # END ADDITION FOR ASSESSMENT_DATA_PROMPT
+
                 # Send results to Airtable
-                send_to_airtable(
-                    record_id,
-                    json_content,
-                    assessment_type,
-                    assessment_name,
-                    extracted_text,
-                    new_marking_guide,
-                    target_field_id,
-                    "Successfully processed assessment by Gemini"
-                )
+                # Send results to Airtable
+                    send_to_airtable(
+                        record_id,
+                        json_content,
+                        assessment_type,
+                        assessment_name,
+                        extracted_text,
+                        new_marking_guide,
+                        target_field_id,
+                        "Successfully processed assessment by Gemini",
+                        student_name="",  # Pass in an empty string for student_name
+                        #curriculum=curriculum,
+                        subject=subject,
+                        topic=topic,
+                        grade_year=grade_year
+                    )
+                    
 
         except Exception as e:
             error_message = f"An error occurred during assessment processing: {str(e)}"
@@ -470,7 +506,6 @@ Temperature: {temperature}
             send_to_airtable(record_id, "", "", "", "", "", target_field_id, error_message)
 
     executor.submit(process)
-
 
 if __name__ == '__main__':
     app.run(debug=True)
