@@ -183,7 +183,7 @@ def summarize_content_with_gemini(file_ref, custom_prompt, response_schema, asse
         logger.error(f"Error in summarize_content_with_gemini: {str(e)}")
         raise
 
-def send_to_airtable(record_id, json_content, assessment_type, assessment_name, extracted_text, new_marking_guide, target_field_id, status_message, student_name=None, curriculum="", subject="", topic="", grade_year=""):
+def send_to_airtable(record_id, json_content, assessment_type, assessment_name, extracted_text, new_marking_guide, target_field_id, status_message, student_name=None, subject="", topic="", grade_year=""):
 
     try:
         # Create the payload
@@ -196,7 +196,7 @@ def send_to_airtable(record_id, json_content, assessment_type, assessment_name, 
             "new_marking_guide": new_marking_guide,
             "status_message": status_message,
             "target_field_id": target_field_id,
-            "curriculum": curriculum,
+            #"curriculum": curriculum,
             "subject": subject,
             "topic": topic,
             "grade_year": grade_year,
@@ -457,7 +457,7 @@ Temperature: {temperature}
                 )
 
                 # BEGIN ADDITION FOR ASSESSMENT_DATA_PROMPT (Step 4)
-                curriculum = ""
+                #curriculum = ""
                 subject = ""
                 topic = ""
                 grade_year = ""
@@ -474,7 +474,7 @@ Temperature: {temperature}
                         repaired_assessment_data = validate_and_repair_json(raw_assessment_data)
                         if repaired_assessment_data:
                             parsed_data = json.loads(repaired_assessment_data)
-                            curriculum = parsed_data.get("curriculum", "")
+                            #curriculum = parsed_data.get("curriculum", "")
                             subject = parsed_data.get("subject", "")
                             topic = parsed_data.get("topic", "")
                             grade_year = parsed_data.get("grade_year", "")
@@ -492,7 +492,7 @@ Temperature: {temperature}
                         target_field_id,
                         "Successfully processed assessment by Gemini",
                         student_name="",  # Pass in an empty string for student_name
-                        curriculum=curriculum,
+                        #curriculum=curriculum,
                         subject=subject,
                         topic=topic,
                         grade_year=grade_year
