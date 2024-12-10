@@ -250,6 +250,35 @@ def extract_student_name_with_gemini(file_ref, student_name_prompt, temperature=
         logger.error(f"Error in extract_student_name_with_gemini: {str(e)}")
         raise
 
+def generate_json_from_text(extracted_text, custom_prompt, response_schema, temperature=0):
+    try:
+        if not extracted_text.strip():
+            raise ValueError("Extracted text cannot be empty")
+
+        if not custom_prompt.strip():
+            raise ValueError("Custom prompt cannot be empty")
+
+        # Prepare the full prompt for JSON generation
+        json_prompt = f"{custom_prompt}\n\nExtracted Text:\n{extracted_text}\n\nSchema:\n{json.dumps(response_schema, indent=2)}"
+
+        # Initialize the Gemini model
+        model = genai.GenerativeModel(model_name='gemini-1.5-flash')
+        generation_config = genai.types.GenerationConfig(temperature=float(temperature))
+
+        # Generate content based on the prompt
+        response = model.generate_content(json_prompt, generation_config=generation_config)
+
+        if response.candidates and response.candidates[0].content.parts:
+            raw_json_content = response.candidates[0].content.parts[0].text
+            json_content = validate_and_repair_json(raw_json_content)
+            logger.info(f"Generated JSON content: {json_content}")
+            return json_content
+        else:
+            logger.warning("No JSON content generated.")
+            return ""
+    except Exception as e:
+        logger.error(f"Error in generate_json_from_text: {str(e)}")
+        raise
 
 def process_pdf_async_submission(pdf_url, record_id, custom_prompt, response_schema, 
                                   text_extraction_prompt, student_name_prompt, target_field_id, temperature=0):
@@ -275,10 +304,9 @@ def process_pdf_async_submission(pdf_url, record_id, custom_prompt, response_sch
                 student_name = extract_student_name_with_gemini(file_ref, student_name_prompt, temperature)
 
                 # Generate JSON using the extracted text and custom prompt
-                enhanced_custom_prompt = f"{custom_prompt}\n\n{extracted_text}"
-                json_content, _, _, _ = summarize_content_with_gemini(
-                    file_ref,  # Using the file_ref here
-                    enhanced_custom_prompt,
+                json_content = generate_json_from_text(
+                    extracted_text,
+                    custom_prompt,
                     response_schema,
                     temperature=temperature
                 )
