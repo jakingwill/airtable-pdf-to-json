@@ -258,10 +258,13 @@ def process_pdf_async_submission(pdf_url, record_id, custom_prompt, response_sch
             logger.info(f"Processing submission with parameters: PDF URL: {pdf_url}, Record ID: {record_id}")
 
             with tempfile.TemporaryDirectory() as temp_dir:
+                # Download the PDF
                 pdf_path = download_pdf(pdf_url, temp_dir)
+                
+                # Upload PDF to Gemini to get the file reference
                 file_ref = upload_pdf_to_gemini(pdf_path)
 
-                # Extract text
+                # Extract text using Gemini
                 extracted_text = extract_text_with_gemini(file_ref, text_extraction_prompt, temperature)
                 if not extracted_text:
                     raise ValueError("No text extracted from the PDF. Cannot proceed.")
@@ -271,11 +274,12 @@ def process_pdf_async_submission(pdf_url, record_id, custom_prompt, response_sch
                     raise ValueError("Student name prompt cannot be empty.")
                 student_name = extract_student_name_with_gemini(file_ref, student_name_prompt, temperature)
 
-                # Summarize content and generate JSON
+                # Generate JSON using the extracted text and custom prompt
+                enhanced_custom_prompt = f"{custom_prompt}\n\n{extracted_text}"
                 json_content, _, _, _ = summarize_content_with_gemini(
-                    file_ref, 
-                    custom_prompt, 
-                    response_schema, 
+                    file_ref,  # Using the file_ref here
+                    enhanced_custom_prompt,
+                    response_schema,
                     temperature=temperature
                 )
 
@@ -299,7 +303,7 @@ def process_pdf_async_submission(pdf_url, record_id, custom_prompt, response_sch
             send_to_airtable(record_id, "", "", "", "", "", target_field_id, error_message)
 
     executor.submit(process)
-
+                                      
 @app.route('/process_pdf/submission', methods=['POST'])
 def process_pdf_submission_route():
     try:
